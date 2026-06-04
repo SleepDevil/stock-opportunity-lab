@@ -267,6 +267,65 @@ export type StockAnalysisResponse = {
   disclaimer: string;
 };
 
+export type FinancialStatementRow = {
+  report_date: string;
+  announcement_date?: string | null;
+  revenue?: number | null;
+  net_profit?: number | null;
+  operating_profit?: number | null;
+  eps?: number | null;
+  operating_cash_flow?: number | null;
+  total_assets?: number | null;
+  total_liabilities?: number | null;
+  asset_liability_ratio?: number | null;
+  gross_margin?: number | null;
+  roe?: number | null;
+  revenue_growth?: number | null;
+  net_profit_growth?: number | null;
+  audit_status?: string | null;
+};
+
+export type FinancialIndicatorRow = {
+  report_date: string;
+  gross_margin?: number | null;
+  roe?: number | null;
+  asset_liability_ratio?: number | null;
+  revenue_growth?: number | null;
+  net_profit_growth?: number | null;
+  current_ratio?: number | null;
+  quick_ratio?: number | null;
+};
+
+export type DisclosureReport = {
+  code: string;
+  name: string;
+  title: string;
+  publish_date?: string | null;
+  url: string;
+};
+
+export type StockFinancialsResponse = {
+  code: string;
+  years: number;
+  source: string;
+  summary: {
+    latest_report_date?: string | null;
+    latest_revenue?: number | null;
+    latest_net_profit?: number | null;
+    latest_operating_cash_flow?: number | null;
+    latest_roe?: number | null;
+    latest_asset_liability_ratio?: number | null;
+    latest_revenue_growth?: number | null;
+    latest_net_profit_growth?: number | null;
+    tone?: string | null;
+    bullets: string[];
+  };
+  statements: FinancialStatementRow[];
+  indicators: FinancialIndicatorRow[];
+  disclosures: DisclosureReport[];
+  disclaimer: string;
+};
+
 export type StockSearchItem = {
   code: string;
   name: string;

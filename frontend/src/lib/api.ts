@@ -10,6 +10,7 @@ import type {
   ScreenResponse,
   ScreenResult,
   StockAnalysisResponse,
+  StockFinancialsResponse,
   StockSearchResponse,
   TaskStatusResponse
 } from '../types/api';
@@ -107,6 +108,21 @@ export function fetchStockSearch(input: {
     params.set('refresh', 'true');
   }
   return request<StockSearchResponse>(`/api/stock-search?${params.toString()}`);
+}
+
+export function fetchStockFinancials(input: {
+  symbol: string;
+  years?: number;
+  refresh?: boolean;
+}): Promise<StockFinancialsResponse> {
+  const params = new URLSearchParams({
+    symbol: input.symbol,
+    years: String(input.years ?? 5)
+  });
+  if (input.refresh) {
+    params.set('refresh', 'true');
+  }
+  return request<StockFinancialsResponse>(`/api/stock-financials?${params.toString()}`);
 }
 
 export function fetchIntraday(input: {

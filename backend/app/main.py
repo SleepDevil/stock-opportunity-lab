@@ -25,11 +25,13 @@ from app.models import (
     TaskStatusResponse,
     StockAnalysisRequest,
     StockAnalysisResponse,
+    StockFinancialsResponse,
     StockSearchResponse,
 )
 from app.services.ai import build_payload, explain
 from app.services.backtest import run_backtest
 from app.services.data_provider import AkShareProvider
+from app.services.financials import AkShareFinancialProvider, run_stock_financials
 from app.services.intraday_alerts import run_intraday_alerts
 from app.services.notification_settings import load_notification_settings, save_notification_settings
 from app.services.notifications import send_feishu_tip
@@ -55,6 +57,10 @@ app.add_middleware(
 
 def provider() -> AkShareProvider:
     return AkShareProvider(CONFIG)
+
+
+def financial_provider() -> AkShareFinancialProvider:
+    return AkShareFinancialProvider()
 
 
 @app.get("/api/health", response_model=ApiMessage)
@@ -218,6 +224,20 @@ def stock_search(query: str, date: str | None = None, refresh: bool = False, lim
             limit=limit,
         )
         return StockSearchResponse(**result)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/stock-financials", response_model=StockFinancialsResponse)
+def stock_financials(symbol: str, years: int = 5, refresh: bool = False) -> StockFinancialsResponse:
+    try:
+        result = run_stock_financials(
+            provider=financial_provider(),
+            symbol=symbol,
+            years=years,
+            refresh=refresh,
+        )
+        return StockFinancialsResponse(**result)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
