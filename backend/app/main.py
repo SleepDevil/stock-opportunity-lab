@@ -26,6 +26,7 @@ from app.models import (
     StockAnalysisRequest,
     StockAnalysisResponse,
     StockFinancialsResponse,
+    StockIntelligenceResponse,
     StockSearchResponse,
 )
 from app.services.ai import build_payload, explain
@@ -38,6 +39,7 @@ from app.services.notifications import send_feishu_tip
 from app.services.screener import latest_screen_date, load_screen_report, load_screen_targets, run_screen
 from app.services.sector_flow import run_sector_flow
 from app.services.stock_analysis import run_stock_analysis, run_stock_search
+from app.services.stock_intelligence import AkShareStockIntelligenceProvider, run_stock_intelligence
 from app.services.task_manager import TaskManager, TaskRecord
 from app.utils import display_date, json_records, normalize_trade_date
 
@@ -61,6 +63,10 @@ def provider() -> AkShareProvider:
 
 def financial_provider() -> AkShareFinancialProvider:
     return AkShareFinancialProvider()
+
+
+def stock_intelligence_provider() -> AkShareStockIntelligenceProvider:
+    return AkShareStockIntelligenceProvider()
 
 
 @app.get("/api/health", response_model=ApiMessage)
@@ -238,6 +244,20 @@ def stock_financials(symbol: str, years: int = 5, refresh: bool = False) -> Stoc
             refresh=refresh,
         )
         return StockFinancialsResponse(**result)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/stock-intelligence", response_model=StockIntelligenceResponse)
+def stock_intelligence(symbol: str, date: str | None = None, refresh: bool = False) -> StockIntelligenceResponse:
+    try:
+        result = run_stock_intelligence(
+            provider=stock_intelligence_provider(),
+            symbol=symbol,
+            trade_date=date,
+            refresh=refresh,
+        )
+        return StockIntelligenceResponse(**result)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

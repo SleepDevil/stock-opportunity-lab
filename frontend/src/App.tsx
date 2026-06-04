@@ -47,6 +47,7 @@ import {
   Layers3,
   LineChart,
   Mail,
+  Newspaper,
   RefreshCw,
   Search,
   Send,
@@ -72,6 +73,7 @@ import {
   fetchScreenReport,
   fetchScreenReports,
   fetchStockFinancials,
+  fetchStockIntelligence,
   fetchStockSearch,
   fetchTask,
   runBacktest,
@@ -95,6 +97,7 @@ import type {
   ScreenResult,
   StockAnalysisResponse,
   StockFinancialsResponse,
+  StockIntelligenceResponse,
   StockSearchItem,
   TaskStatusResponse,
   TrendPoint
@@ -801,6 +804,17 @@ function StockAnalysisPage() {
     staleTime: 10 * 60_000,
     retry: false
   });
+  const stockIntelligence = useQuery({
+    queryKey: ['stock-intelligence', analysis?.code, analysis?.trade_date, refreshStock],
+    queryFn: () => fetchStockIntelligence({
+      symbol: analysis?.code ?? '',
+      date: analysis?.trade_date,
+      refresh: refreshStock
+    }),
+    enabled: Boolean(analysis?.code),
+    staleTime: 5 * 60_000,
+    retry: false
+  });
 
   const dailyChartRows = useMemo<IntradayPoint[]>(() => {
     if (!analysis) {
@@ -1036,6 +1050,12 @@ function StockAnalysisPage() {
             />
           </Paper>
 
+          <StockIntelligencePanel
+            intelligence={stockIntelligence.data}
+            loading={stockIntelligence.isFetching && !stockIntelligence.data}
+            error={stockIntelligence.error instanceof Error ? stockIntelligence.error.message : ''}
+          />
+
           <StockFinancialsPanel
             financials={stockFinancials.data}
             loading={stockFinancials.isFetching && !stockFinancials.data}
@@ -1055,6 +1075,216 @@ function StockAnalysisPage() {
         </Paper>
       )}
     </Stack>
+  );
+}
+
+function StockIntelligencePanel({
+  intelligence,
+  loading,
+  error
+}: {
+  intelligence?: StockIntelligenceResponse;
+  loading: boolean;
+  error: string;
+}) {
+  if (loading) {
+    return (
+      <Paper className="opportunity-board intelligence-panel" withBorder>
+        <div className="empty-state refined">
+          <Newspaper size={20} />
+          <span>正在拉取公告、新闻和龙虎榜...</span>
+        </div>
+      </Paper>
+    );
+  }
+
+  if (error) {
+    return <TaskErrorAlert error={`个股情报加载失败：${error}`} />;
+  }
+
+  if (!intelligence) {
+    return null;
+  }
+
+  const summary = intelligence.dragon_tiger.summary;
+  const institution = intelligence.dragon_tiger.institution;
+
+  return (
+    <Paper className="opportunity-board intelligence-panel" withBorder>
+      <Group justify="space-between" align="flex-start" mb="md">
+        <div>
+          <Text fw={900}>个股情报</Text>
+          <Text size="sm" c="dimmed">
+            公告 {displayTradeDate(intelligence.notice_start_date)} - {displayTradeDate(intelligence.notice_end_date)}，
+            新闻和龙虎榜按 {displayTradeDate(intelligence.trade_date)} 观察。
+          </Text>
+        </div>
+        <Badge color={summary ? 'orange' : intelligence.notices.length ? 'blue' : 'gray'} variant="light">
+          {summary ? '龙虎榜上榜' : intelligence.notices.length ? '公告更新' : '情报观察'}
+        </Badge>
+      </Group>
+
+      <Tabs defaultValue="notices" className="intelligence-tabs" keepMounted={false}>
+        <Tabs.List>
+          <Tabs.Tab value="notices" leftSection={<FileText size={15} />}>公告</Tabs.Tab>
+          <Tabs.Tab value="news" leftSection={<Newspaper size={15} />}>新闻</Tabs.Tab>
+          <Tabs.Tab value="lhb" leftSection={<TrendingUp size={15} />}>龙虎榜</Tabs.Tab>
+        </Tabs.List>
+
+        <Tabs.Panel value="notices" pt="md">
+          {intelligence.notices.length ? (
+            <div className="intelligence-list">
+              {intelligence.notices.map((notice) => (
+                <div className="intelligence-row" key={`${notice.publish_date}-${notice.title}`}>
+                  <div className="intelligence-copy">
+                    <Tooltip label={notice.title} multiline maw={420} openDelay={300}>
+                      <Text fw={900} title={notice.title} className="intelligence-title">{notice.title}</Text>
+                    </Tooltip>
+                    <Text size="xs" c="dimmed">
+                      {notice.publish_date || '未披露日期'} · {notice.source} · {notice.category || '未分类'}
+                    </Text>
+                  </div>
+                  <OpenLinkButton url={notice.url} />
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="empty-state refined">
+              <FileText size={18} />
+              <span>该日期窗口暂无东方财富公告。</span>
+            </div>
+          )}
+        </Tabs.Panel>
+
+        <Tabs.Panel value="news" pt="md">
+          {intelligence.news.length ? (
+            <div className="intelligence-list">
+              {intelligence.news.map((item) => (
+                <div className="news-row" key={`${item.publish_time}-${item.title}`}>
+                  <div className="intelligence-copy">
+                    <Tooltip label={item.title} multiline maw={420} openDelay={300}>
+                      <Text fw={900} title={item.title} className="intelligence-title">{item.title}</Text>
+                    </Tooltip>
+                    <Text size="xs" c="dimmed">{item.publish_time || '未知时间'} · {item.source || '东方财富新闻'}</Text>
+                    <Text size="sm" c="dimmed" className="news-content" title={item.content}>
+                      {item.content || '新闻源未返回摘要。'}
+                    </Text>
+                  </div>
+                  <OpenLinkButton url={item.url} />
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="empty-state refined">
+              <Newspaper size={18} />
+              <span>东方财富未返回该日期附近的个股新闻。</span>
+            </div>
+          )}
+        </Tabs.Panel>
+
+        <Tabs.Panel value="lhb" pt="md">
+          {summary ? (
+            <Stack gap="md">
+              <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing="sm">
+                <StatusTile label="上榜日期" value={formatReportDate(summary.trade_date)} />
+                <StatusTile label="收盘 / 涨跌" value={`${formatNumber(summary.close_price)} / ${formatPct(summary.pct_change)}`} />
+                <StatusTile label="总成交额" value={formatMoney(summary.market_total_amount)} />
+                <StatusTile label="龙虎榜净买" value={formatMoney(summary.net_buy_amount)} />
+                <StatusTile label="龙虎榜成交" value={formatMoney(summary.dragon_tiger_amount)} />
+                <StatusTile label="换手率" value={formatPct(summary.turnover)} />
+                <StatusTile label="机构净额" value={formatMoney(institution?.net_amount)} />
+                <StatusTile label="机构买/卖" value={`${formatMoney(institution?.buy_amount)} / ${formatMoney(institution?.sell_amount)}`} />
+              </SimpleGrid>
+
+              <Alert color={institution?.net_amount != null && institution.net_amount < 0 ? 'orange' : 'blue'} variant="light" icon={<TrendingUp size={18} />}>
+                <Text size="sm" fw={900}>{summary.reason || '龙虎榜上榜'}</Text>
+                <Text size="sm" c="dimmed" mt={4}>
+                  {summary.interpretation || '上游未返回解读。'}
+                  {institution ? ` 机构买方 ${institution.buy_count ?? '-'} 家，卖方 ${institution.sell_count ?? '-'} 家。` : ''}
+                </Text>
+              </Alert>
+
+              <SimpleGrid cols={{ base: 1, lg: 2 }} spacing="md">
+                <DragonTigerSeatTable title="买入席位" rows={intelligence.dragon_tiger.buy_seats} />
+                <DragonTigerSeatTable title="卖出席位" rows={intelligence.dragon_tiger.sell_seats} />
+              </SimpleGrid>
+            </Stack>
+          ) : (
+            <div className="empty-state refined">
+              <TrendingUp size={18} />
+              <span>
+                {intelligence.dragon_tiger.available_dates.length
+                  ? `该日期未上榜，最近上榜日期 ${displayTradeDate(intelligence.dragon_tiger.available_dates[0])}。`
+                  : '暂无龙虎榜记录。'}
+              </span>
+            </div>
+          )}
+        </Tabs.Panel>
+      </Tabs>
+
+      <Text size="xs" c="dimmed" mt="md">{intelligence.disclaimer}</Text>
+    </Paper>
+  );
+}
+
+function OpenLinkButton({ url }: { url?: string }) {
+  if (!url) {
+    return <Button variant="light" color="gray" size="xs" disabled>无链接</Button>;
+  }
+  return (
+    <Button
+      component="a"
+      href={url}
+      target="_blank"
+      rel="noreferrer"
+      variant="light"
+      color="dark"
+      size="xs"
+      leftSection={<FileText size={14} />}
+    >
+      打开
+    </Button>
+  );
+}
+
+function DragonTigerSeatTable({ title, rows }: { title: string; rows: StockIntelligenceResponse['dragon_tiger']['buy_seats'] }) {
+  return (
+    <Paper className="intelligence-subcard" withBorder>
+      <Group justify="space-between" mb="xs">
+        <Text fw={900}>{title}</Text>
+        <Badge color={rows.length ? 'teal' : 'gray'} variant="light">{rows.length} 席</Badge>
+      </Group>
+      {rows.length ? (
+        <Table.ScrollContainer minWidth={560}>
+          <Table className="dragon-seat-table" verticalSpacing={7}>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>席位</Table.Th>
+                <Table.Th>买入</Table.Th>
+                <Table.Th>卖出</Table.Th>
+                <Table.Th>净额</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {rows.map((row) => (
+                <Table.Tr key={`${row.rank}-${row.branch}`}>
+                  <Table.Td>
+                    <Tooltip label={row.branch} multiline maw={360} openDelay={300}>
+                      <span className="seat-branch">{row.rank ? `#${row.rank} ` : ''}{row.branch}</span>
+                    </Tooltip>
+                  </Table.Td>
+                  <Table.Td>{formatMoney(row.buy_amount)}</Table.Td>
+                  <Table.Td>{formatMoney(row.sell_amount)}</Table.Td>
+                  <Table.Td className={classForSigned(row.net_amount)}>{formatMoney(row.net_amount)}</Table.Td>
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
+        </Table.ScrollContainer>
+      ) : (
+        <Text size="sm" c="dimmed">暂无席位明细。</Text>
+      )}
+    </Paper>
   );
 }
 

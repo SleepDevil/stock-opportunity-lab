@@ -11,6 +11,7 @@ import type {
   ScreenResult,
   StockAnalysisResponse,
   StockFinancialsResponse,
+  StockIntelligenceResponse,
   StockSearchResponse,
   TaskStatusResponse
 } from '../types/api';
@@ -123,6 +124,21 @@ export function fetchStockFinancials(input: {
     params.set('refresh', 'true');
   }
   return request<StockFinancialsResponse>(`/api/stock-financials?${params.toString()}`);
+}
+
+export function fetchStockIntelligence(input: {
+  symbol: string;
+  date?: string;
+  refresh?: boolean;
+}): Promise<StockIntelligenceResponse> {
+  const params = new URLSearchParams({ symbol: input.symbol });
+  if (input.date) {
+    params.set('date', input.date);
+  }
+  if (input.refresh) {
+    params.set('refresh', 'true');
+  }
+  return request<StockIntelligenceResponse>(`/api/stock-intelligence?${params.toString()}`);
 }
 
 export function fetchIntraday(input: {
