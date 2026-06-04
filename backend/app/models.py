@@ -215,3 +215,15 @@ class StockFinancialsResponse(BaseModel):
     indicators: list[dict[str, Any]]
     disclosures: list[dict[str, Any]]
     disclaimer: str
+
+
+class StockIntelligenceResponse(BaseModel):
+    code: str
+    trade_date: str
+    notice_start_date: str
+    notice_end_date: str
+    source: str
+    notices: list[dict[str, Any]]
+    news: list[dict[str, Any]]
+    dragon_tiger: dict[str, Any]
+    disclaimer: str

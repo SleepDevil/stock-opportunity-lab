@@ -326,6 +326,78 @@ export type StockFinancialsResponse = {
   disclaimer: string;
 };
 
+export type StockNoticeItem = {
+  code: string;
+  name: string;
+  title: string;
+  category: string;
+  publish_date?: string | null;
+  source: string;
+  url: string;
+};
+
+export type StockNewsItem = {
+  keyword: string;
+  title: string;
+  content: string;
+  publish_time: string;
+  source: string;
+  url: string;
+};
+
+export type DragonTigerSeat = {
+  rank?: number | null;
+  branch: string;
+  buy_amount?: number | null;
+  buy_ratio?: number | null;
+  sell_amount?: number | null;
+  sell_ratio?: number | null;
+  net_amount?: number | null;
+  type: string;
+};
+
+export type DragonTigerSummary = {
+  trade_date?: string | null;
+  interpretation?: string | null;
+  close_price?: number | null;
+  pct_change?: number | null;
+  net_buy_amount?: number | null;
+  buy_amount?: number | null;
+  sell_amount?: number | null;
+  dragon_tiger_amount?: number | null;
+  market_total_amount?: number | null;
+  turnover?: number | null;
+  float_market_cap?: number | null;
+  reason?: string | null;
+};
+
+export type DragonTigerInstitution = {
+  trade_date?: string | null;
+  buy_count?: number | null;
+  sell_count?: number | null;
+  buy_amount?: number | null;
+  sell_amount?: number | null;
+  net_amount?: number | null;
+};
+
+export type StockIntelligenceResponse = {
+  code: string;
+  trade_date: string;
+  notice_start_date: string;
+  notice_end_date: string;
+  source: string;
+  notices: StockNoticeItem[];
+  news: StockNewsItem[];
+  dragon_tiger: {
+    available_dates: string[];
+    summary?: DragonTigerSummary | null;
+    institution?: DragonTigerInstitution | null;
+    buy_seats: DragonTigerSeat[];
+    sell_seats: DragonTigerSeat[];
+  };
+  disclaimer: string;
+};
+
 export type StockSearchItem = {
   code: string;
   name: string;

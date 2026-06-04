@@ -303,6 +303,350 @@ def test_stock_financials_api_returns_response_model(monkeypatch) -> None:
     assert response.disclosures[0]["title"] == "2025年年度报告"
 
 
+def test_stock_intelligence_combines_notices_news_and_lhb() -> None:
+    import pandas as pd
+
+    from app.services.stock_intelligence import run_stock_intelligence
+
+    class FakeStockIntelligenceProvider:
+        def notices(self, symbol: str, begin_date: str, end_date: str) -> pd.DataFrame:
+            assert symbol == "001309"
+            assert begin_date == "20260604"
+            assert end_date == "20260605"
+            return pd.DataFrame(
+                [
+                    {
+                        "代码": "001309",
+                        "名称": "德明利",
+                        "公告标题": "德明利:关于董事会换届选举的公告",
+                        "公告类型": "高管人员任职变动",
+                        "公告日期": "2026-06-05",
+                        "网址": "https://data.eastmoney.com/notices/detail/001309/AN1.html",
+                    },
+                    {
+                        "代码": "001309",
+                        "名称": "德明利",
+                        "公告标题": "德明利:关于增加公司2026年度担保额度预计的公告",
+                        "公告类型": "担保年度额度预计",
+                        "公告日期": "2026-06-05",
+                        "网址": "https://data.eastmoney.com/notices/detail/001309/AN2.html",
+                    },
+                ]
+            )
+
+        def news(self, symbol: str) -> pd.DataFrame:
+            assert symbol == "001309"
+            return pd.DataFrame(
+                [
+                    {
+                        "关键词": "001309",
+                        "新闻标题": "德明利001309龙虎榜数据06-04)",
+                        "新闻内容": "德明利当日收报680.85元，涨跌幅10.00%，换手率11.88%，成交额126.89亿。",
+                        "发布时间": "2026-06-04 16:30:50",
+                        "文章来源": "东方财富Choice数据",
+                        "新闻链接": "http://finance.eastmoney.com/a/lhb.html",
+                    },
+                    {
+                        "关键词": "001309",
+                        "新闻标题": "德明利：启动董事会换届选举 公布提名候选人",
+                        "新闻内容": "2026年一季度，德明利实现收入75.38亿元，归母净利润33.46亿元。",
+                        "发布时间": "2026-06-04 18:44:00",
+                        "文章来源": "财中社",
+                        "新闻链接": "http://finance.eastmoney.com/a/board.html",
+                    },
+                ]
+            )
+
+        def news_search(self, keyword: str, page_size: int = 50) -> pd.DataFrame:
+            return pd.DataFrame()
+
+        def lhb_dates(self, symbol: str) -> pd.DataFrame:
+            assert symbol == "001309"
+            return pd.DataFrame([{"序号": 1, "股票代码": "001309", "交易日": "2026-06-04"}])
+
+        def lhb_detail(self, symbol: str, date: str, flag: str) -> pd.DataFrame:
+            assert symbol == "001309"
+            assert date == "20260604"
+            rows = {
+                "买入": [
+                    {
+                        "序号": 1,
+                        "交易营业部名称": "深股通专用",
+                        "买入金额": 1_064_632_000,
+                        "买入金额-占总成交比例": 8.39,
+                        "卖出金额": 505_101_000,
+                        "卖出金额-占总成交比例": 3.98,
+                        "净额": 559_530_900,
+                        "类型": "日涨幅偏离值达到7%的前5只证券",
+                    }
+                ],
+                "卖出": [
+                    {
+                        "序号": 2,
+                        "交易营业部名称": "华泰证券股份有限公司上海武定路证券营业部",
+                        "买入金额": 59_282_090,
+                        "买入金额-占总成交比例": 0.47,
+                        "卖出金额": 482_785_900,
+                        "卖出金额-占总成交比例": 3.80,
+                        "净额": -423_503_800,
+                        "类型": "日涨幅偏离值达到7%的前5只证券",
+                    }
+                ],
+            }
+            return pd.DataFrame(rows[flag])
+
+        def lhb_daily(self, start_date: str, end_date: str) -> pd.DataFrame:
+            assert start_date == "20260604"
+            assert end_date == "20260604"
+            return pd.DataFrame(
+                [
+                    {
+                        "代码": "001309",
+                        "名称": "德明利",
+                        "上榜日": "2026-06-04",
+                        "解读": "2家机构买入，成功率34.75%",
+                        "收盘价": 680.85,
+                        "涨跌幅": 10.0008,
+                        "龙虎榜净买额": 103_075_700,
+                        "龙虎榜买入额": 1_989_210_000,
+                        "龙虎榜卖出额": 1_886_134_000,
+                        "龙虎榜成交额": 3_875_344_000,
+                        "市场总成交额": 12_689_023_776,
+                        "换手率": 11.6218,
+                        "流通市值": 112_282_300_000,
+                        "上榜原因": "日涨幅偏离值达到7%的前5只证券",
+                    }
+                ]
+            )
+
+        def lhb_institution_stats(self, start_date: str, end_date: str) -> pd.DataFrame:
+            assert start_date == "20260604"
+            assert end_date == "20260604"
+            return pd.DataFrame(
+                [
+                    {
+                        "代码": "001309",
+                        "名称": "德明利",
+                        "上榜日期": "2026-06-04",
+                        "买方机构数": 2,
+                        "卖方机构数": 2,
+                        "机构买入总额": 424_623_700,
+                        "机构卖出总额": 709_816_600,
+                        "机构买入净额": -285_192_900,
+                    }
+                ]
+            )
+
+    result = run_stock_intelligence(FakeStockIntelligenceProvider(), "001309", "20260604")
+
+    assert result["code"] == "001309"
+    assert result["trade_date"] == "20260604"
+    assert result["notices"][0]["title"] == "德明利:关于董事会换届选举的公告"
+    assert result["notices"][0]["category"] == "高管人员任职变动"
+    assert result["notices"][0]["publish_date"] == "2026-06-05"
+    assert result["notices"][0]["source"] == "东方财富公告"
+    lhb_news = next(item for item in result["news"] if item["title"] == "德明利001309龙虎榜数据06-04)")
+    assert lhb_news["source"] == "东方财富Choice数据"
+    assert result["dragon_tiger"]["summary"]["reason"] == "日涨幅偏离值达到7%的前5只证券"
+    assert result["dragon_tiger"]["summary"]["close_price"] == 680.85
+    assert result["dragon_tiger"]["summary"]["market_total_amount"] == 12_689_023_776
+    assert result["dragon_tiger"]["institution"]["net_amount"] == -285_192_900
+    assert result["dragon_tiger"]["buy_seats"][0]["branch"] == "深股通专用"
+    assert result["dragon_tiger"]["sell_seats"][0]["net_amount"] == -423_503_800
+
+
+def test_stock_intelligence_retries_transient_news_failure() -> None:
+    import pandas as pd
+
+    from app.services.stock_intelligence import run_stock_intelligence
+
+    class FlakyNewsProvider:
+        def __init__(self) -> None:
+            self.news_calls = 0
+
+        def notices(self, symbol: str, begin_date: str, end_date: str) -> pd.DataFrame:
+            return pd.DataFrame()
+
+        def news(self, symbol: str) -> pd.DataFrame:
+            self.news_calls += 1
+            if self.news_calls == 1:
+                raise RuntimeError("temporary eastmoney timeout")
+            return pd.DataFrame(
+                [
+                    {
+                        "关键词": symbol,
+                        "新闻标题": "德明利：启动董事会换届选举 公布提名候选人",
+                        "新闻内容": "2026年一季度，德明利实现收入75.38亿元。",
+                        "发布时间": "2026-06-04 18:44:00",
+                        "文章来源": "财中社",
+                        "新闻链接": "http://finance.eastmoney.com/a/board.html",
+                    }
+                ]
+            )
+
+        def news_search(self, keyword: str, page_size: int = 50) -> pd.DataFrame:
+            return pd.DataFrame()
+
+        def lhb_dates(self, symbol: str) -> pd.DataFrame:
+            return pd.DataFrame()
+
+        def lhb_detail(self, symbol: str, date: str, flag: str) -> pd.DataFrame:
+            return pd.DataFrame()
+
+        def lhb_daily(self, start_date: str, end_date: str) -> pd.DataFrame:
+            return pd.DataFrame()
+
+        def lhb_institution_stats(self, start_date: str, end_date: str) -> pd.DataFrame:
+            return pd.DataFrame()
+
+    provider = FlakyNewsProvider()
+
+    result = run_stock_intelligence(provider, "001309", "20260604")
+
+    assert provider.news_calls == 2
+    assert result["news"][0]["title"] == "德明利：启动董事会换届选举 公布提名候选人"
+
+
+def test_stock_intelligence_preserves_notice_source_order() -> None:
+    import pandas as pd
+
+    from app.services.stock_intelligence import notice_rows
+
+    rows = notice_rows(
+        pd.DataFrame(
+            [
+                {"代码": "001309", "名称": "德明利", "公告标题": "德明利:A源站第一条", "公告日期": "2026-06-05"},
+                {"代码": "001309", "名称": "德明利", "公告标题": "德明利:Z源站第二条", "公告日期": "2026-06-05"},
+            ]
+        )
+    )
+
+    assert [row["title"] for row in rows] == ["德明利:A源站第一条", "德明利:Z源站第二条"]
+
+
+def test_stock_intelligence_merges_eastmoney_search_news() -> None:
+    import pandas as pd
+
+    from app.services.stock_intelligence import run_stock_intelligence
+
+    class SearchNewsProvider:
+        def notices(self, symbol: str, begin_date: str, end_date: str) -> pd.DataFrame:
+            return pd.DataFrame([{"代码": symbol, "名称": "德明利", "公告标题": "德明利:关于董事会换届选举的公告", "公告日期": "2026-06-05"}])
+
+        def news(self, symbol: str) -> pd.DataFrame:
+            return pd.DataFrame(
+                [
+                    {
+                        "关键词": symbol,
+                        "新闻标题": "德明利001309龙虎榜数据06-04)",
+                        "新闻内容": "德明利当日收报680.85元。",
+                        "发布时间": "2026-06-04 16:30:50",
+                        "文章来源": "东方财富Choice数据",
+                        "新闻链接": "http://finance.eastmoney.com/a/lhb.html",
+                    }
+                ]
+            )
+
+        def news_search(self, keyword: str, page_size: int = 50) -> pd.DataFrame:
+            assert keyword == "德明利"
+            assert page_size == 50
+            return pd.DataFrame(
+                [
+                    {
+                        "date": "2026-06-04 18:21:45",
+                        "title": "龙虎榜丨机构今日买入这33股，卖出<em>德明利</em>2.85亿元",
+                        "content": "当天机构净卖出前三的股票分别是<em>德明利</em>、中国铝业、洁美科技。",
+                        "mediaName": "第一财经",
+                        "url": "http://finance.eastmoney.com/a/yicai.html",
+                    },
+                    {
+                        "date": "2026-06-04 17:28:52",
+                        "title": "龙虎榜|<em>德明利</em>涨停，深股通净买入5.6亿元，三机构净卖出2.85亿元",
+                        "content": "三家机构买入4.25亿元，卖出7.1亿元，净卖出2.85亿元。",
+                        "mediaName": "财联社",
+                        "url": "http://finance.eastmoney.com/a/cls.html",
+                    },
+                ]
+            )
+
+        def lhb_dates(self, symbol: str) -> pd.DataFrame:
+            return pd.DataFrame()
+
+        def lhb_detail(self, symbol: str, date: str, flag: str) -> pd.DataFrame:
+            return pd.DataFrame()
+
+        def lhb_daily(self, start_date: str, end_date: str) -> pd.DataFrame:
+            return pd.DataFrame()
+
+        def lhb_institution_stats(self, start_date: str, end_date: str) -> pd.DataFrame:
+            return pd.DataFrame()
+
+    result = run_stock_intelligence(SearchNewsProvider(), "001309", "20260604")
+
+    titles = [item["title"] for item in result["news"]]
+    assert "龙虎榜丨机构今日买入这33股，卖出德明利2.85亿元" in titles
+    assert "龙虎榜|德明利涨停，深股通净买入5.6亿元，三机构净卖出2.85亿元" in titles
+    assert all("<em>" not in item["title"] and "<em>" not in item["content"] for item in result["news"])
+    assert result["news"][0]["source"] == "第一财经"
+
+
+def test_stock_intelligence_api_returns_response_model(monkeypatch) -> None:
+    from app import main
+
+    def fake_run_stock_intelligence(provider, symbol: str, trade_date: str, refresh: bool = False):
+        assert provider == "fake-intelligence-provider"
+        assert symbol == "001309"
+        assert trade_date == "20260604"
+        assert refresh is True
+        return {
+            "code": "001309",
+            "trade_date": "20260604",
+            "notice_start_date": "20260604",
+            "notice_end_date": "20260605",
+            "source": "akshare:eastmoney",
+            "notices": [
+                {
+                    "code": "001309",
+                    "name": "德明利",
+                    "title": "德明利:关于董事会换届选举的公告",
+                    "category": "高管人员任职变动",
+                    "publish_date": "2026-06-05",
+                    "source": "东方财富公告",
+                    "url": "https://data.eastmoney.com/notices/detail/001309/AN1.html",
+                }
+            ],
+            "news": [
+                {
+                    "keyword": "001309",
+                    "title": "德明利001309龙虎榜数据06-04)",
+                    "content": "德明利当日收报680.85元。",
+                    "publish_time": "2026-06-04 16:30:50",
+                    "source": "东方财富Choice数据",
+                    "url": "http://finance.eastmoney.com/a/lhb.html",
+                }
+            ],
+            "dragon_tiger": {
+                "available_dates": ["20260604"],
+                "summary": {"trade_date": "20260604", "close_price": 680.85},
+                "institution": {"net_amount": -285_192_900},
+                "buy_seats": [],
+                "sell_seats": [],
+            },
+            "disclaimer": "公告、新闻和龙虎榜来自公开数据。",
+        }
+
+    monkeypatch.setattr(main, "stock_intelligence_provider", lambda: "fake-intelligence-provider", raising=False)
+    monkeypatch.setattr(main, "run_stock_intelligence", fake_run_stock_intelligence, raising=False)
+
+    response = main.stock_intelligence("001309", date="20260604", refresh=True)
+
+    assert response.code == "001309"
+    assert response.trade_date == "20260604"
+    assert response.notices[0]["category"] == "高管人员任职变动"
+    assert response.news[0]["source"] == "东方财富Choice数据"
+    assert response.dragon_tiger["institution"]["net_amount"] == -285_192_900
+
+
 def test_history_ignores_one_row_cache_for_wide_date_range(tmp_path: Path, monkeypatch) -> None:
     import pandas as pd
 
