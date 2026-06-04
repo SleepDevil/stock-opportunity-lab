@@ -1,0 +1,19 @@
+{
+  "name": "stock-opportunity-lab",
+  "private": true,
+  "version": "0.1.0",
+  "description": "AkShare-powered A-share opportunity screening, buy planning, and backtesting web app.",
+  "scripts": {
+    "dev": "concurrently -n api,web -c cyan,green \"npm run dev:api\" \"npm run dev:web\"",
+    "dev:api": "cd backend && ../.venv/bin/uvicorn app.main:app --reload --host 127.0.0.1 --port 8000",
+    "dev:web": "cd frontend && npm run dev -- --host 127.0.0.1",
+    "setup": "python3 -m venv .venv && ./.venv/bin/python -m pip install --upgrade pip && ./.venv/bin/python -m pip install -e \"backend[test]\" && npm install && npm --prefix frontend install",
+    "test": "npm run test:api && npm run test:web",
+    "test:api": "./.venv/bin/python -m pytest backend/tests",
+    "test:web": "npm --prefix frontend run build",
+    "build": "npm --prefix frontend run build"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}

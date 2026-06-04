@@ -1,0 +1,23 @@
+[project]
+name = "stock-opportunity-lab-api"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+  "akshare>=1.18.0",
+  "curl-cffi>=0.15.0",
+  "fastapi>=0.124.0",
+  "pandas>=2.2.0",
+  "pydantic>=2.12.0",
+  "python-dotenv>=1.2.0",
+  "uvicorn[standard]>=0.38.0",
+]
+
+[project.optional-dependencies]
+test = [
+  "pytest>=9.0.0",
+  "httpx>=0.28.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
