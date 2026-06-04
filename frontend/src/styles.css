@@ -579,6 +579,74 @@ button {
   margin: 4px 0;
 }
 
+.financial-panel {
+  overflow: hidden;
+}
+
+.financial-tabs .mantine-Tabs-list {
+  gap: 6px;
+}
+
+.financial-tabs .mantine-Tabs-tab {
+  min-height: 36px;
+}
+
+.financial-bullets {
+  margin-top: 0;
+}
+
+.financial-table {
+  min-width: 860px;
+  table-layout: fixed;
+  font-size: 12px;
+}
+
+.financial-table th {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.financial-table td {
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.financial-table th:first-child,
+.financial-table td:first-child {
+  width: 104px;
+}
+
+.disclosure-list {
+  display: grid;
+  gap: 8px;
+}
+
+.disclosure-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  min-height: 58px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.disclosure-copy {
+  min-width: 0;
+}
+
+.disclosure-title {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .command-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 318px;
@@ -1226,6 +1294,11 @@ button {
   .stock-suggestion-tags {
     justify-content: flex-start;
     white-space: normal;
+  }
+
+  .disclosure-row {
+    grid-template-columns: 1fr;
+    justify-items: start;
   }
 
   .opportunity-strip {

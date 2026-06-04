@@ -204,3 +204,14 @@ class StockAnalysisResponse(BaseModel):
     trend_points: list[dict[str, Any]]
     recommendation: dict[str, Any]
     disclaimer: str
+
+
+class StockFinancialsResponse(BaseModel):
+    code: str
+    years: int
+    source: str
+    summary: dict[str, Any]
+    statements: list[dict[str, Any]]
+    indicators: list[dict[str, Any]]
+    disclosures: list[dict[str, Any]]
+    disclaimer: str

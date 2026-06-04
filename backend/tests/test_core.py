@@ -115,6 +115,194 @@ def test_stock_analysis_resolves_code_without_position(tmp_path: Path) -> None:
     assert result["board"] == "创业板"
 
 
+def test_stock_financials_builds_summary_from_provider() -> None:
+    import pandas as pd
+
+    from app.services.financials import run_stock_financials
+
+    class FakeFinancialProvider:
+        def financial_report(self, symbol: str, statement: str) -> pd.DataFrame:
+            assert symbol == "001270"
+            if statement == "利润表":
+                return pd.DataFrame(
+                    [
+                        {
+                            "报告日": "20260331",
+                            "营业总收入": 103_897_665.11,
+                            "营业成本": 18_524_367.95,
+                            "归属于母公司所有者的净利润": 44_724_149.72,
+                            "基本每股收益": 0.2198,
+                            "公告日期": "20260428",
+                            "是否审计": "未审计",
+                        },
+                        {
+                            "报告日": "20251231",
+                            "营业总收入": 404_622_960.22,
+                            "归属于母公司所有者的净利润": 117_109_847.25,
+                            "基本每股收益": 0.5755,
+                            "公告日期": "20260417",
+                            "是否审计": "是",
+                        },
+                    ]
+                )
+            if statement == "资产负债表":
+                return pd.DataFrame(
+                    [
+                        {"报告日": "20260331", "资产总计": 1_502_741_398.09, "负债合计": 371_919_615.57},
+                        {"报告日": "20251231", "资产总计": 1_408_000_000.00, "负债合计": 320_000_000.00},
+                    ]
+                )
+            if statement == "现金流量表":
+                return pd.DataFrame(
+                    [
+                        {"报告日": "20260331", "经营活动产生的现金流量净额": 13_200_791.14},
+                        {"报告日": "20251231", "经营活动产生的现金流量净额": 88_000_000.00},
+                    ]
+                )
+            raise AssertionError(statement)
+
+        def financial_indicators(self, symbol: str, start_year: str) -> pd.DataFrame:
+            assert symbol == "001270"
+            assert start_year
+            return pd.DataFrame(
+                [
+                    {
+                        "日期": "2026-03-31",
+                        "净资产收益率(%)": 3.95,
+                        "资产负债率(%)": 24.75,
+                        "主营业务收入增长率(%)": 10.5,
+                        "净利润增长率(%)": -18.2,
+                    },
+                    {
+                        "日期": "2025-12-31",
+                        "销售毛利率(%)": 72.67,
+                        "净资产收益率(%)": 9.24,
+                        "资产负债率(%)": 22.73,
+                    },
+                ]
+            )
+
+        def disclosure_reports(
+            self,
+            symbol: str,
+            *,
+            category: str,
+            start_date: str,
+            end_date: str,
+            keyword: str = "",
+        ) -> pd.DataFrame:
+            assert symbol == "001270"
+            assert category == "年报"
+            assert start_date <= end_date
+            assert keyword == ""
+            return pd.DataFrame(
+                [
+                    {
+                        "代码": "001270",
+                        "简称": "*ST铖昌",
+                        "公告标题": "2025年年度报告",
+                        "公告时间": "2026-04-17",
+                        "公告链接": "http://www.cninfo.com.cn/report",
+                    }
+                ]
+            )
+
+    result = run_stock_financials(FakeFinancialProvider(), "001270", years=2)
+
+    assert result["code"] == "001270"
+    assert result["summary"]["latest_report_date"] == "20260331"
+    assert result["summary"]["latest_revenue"] == 103_897_665.11
+    assert result["summary"]["latest_net_profit"] == 44_724_149.72
+    assert result["statements"][0]["report_date"] == "20260331"
+    assert result["statements"][0]["revenue"] == 103_897_665.11
+    assert result["statements"][0]["net_profit"] == 44_724_149.72
+    assert result["statements"][0]["operating_cash_flow"] == 13_200_791.14
+    assert result["statements"][0]["asset_liability_ratio"] == 24.75
+    assert result["indicators"][0]["gross_margin"] == 82.17
+    assert result["disclosures"][0]["title"] == "2025年年度报告"
+    assert result["disclosures"][0]["publish_date"] == "2026-04-17"
+    assert result["disclosures"][0]["url"] == "http://www.cninfo.com.cn/report"
+
+
+def test_stock_financials_api_returns_response_model(monkeypatch) -> None:
+    from app import main
+
+    def fake_run_stock_financials(provider, symbol: str, years: int = 5, refresh: bool = False):
+        assert provider == "fake-provider"
+        assert symbol == "001270"
+        assert years == 2
+        assert refresh is True
+        return {
+            "code": "001270",
+            "years": 2,
+            "source": "akshare:sina_finance+cninfo",
+            "summary": {
+                "latest_report_date": "20260331",
+                "latest_revenue": 103_897_665.11,
+                "latest_net_profit": 44_724_149.72,
+                "latest_operating_cash_flow": 13_200_791.14,
+                "latest_roe": 3.95,
+                "latest_asset_liability_ratio": 24.75,
+                "latest_revenue_growth": 10.5,
+                "latest_net_profit_growth": -18.2,
+                "tone": "neutral",
+                "bullets": ["营收同比 10.50%。"],
+            },
+            "statements": [
+                {
+                    "report_date": "20260331",
+                    "announcement_date": "20260428",
+                    "revenue": 103_897_665.11,
+                    "net_profit": 44_724_149.72,
+                    "operating_profit": 43_838_716.05,
+                    "eps": 0.22,
+                    "operating_cash_flow": 13_200_791.14,
+                    "total_assets": 1_502_741_398.09,
+                    "total_liabilities": 371_919_615.57,
+                    "asset_liability_ratio": 24.75,
+                    "gross_margin": 82.17,
+                    "roe": 3.95,
+                    "revenue_growth": 10.5,
+                    "net_profit_growth": -18.2,
+                    "audit_status": "未审计",
+                }
+            ],
+            "indicators": [
+                {
+                    "report_date": "20260331",
+                    "gross_margin": 82.17,
+                    "roe": 3.95,
+                    "asset_liability_ratio": 24.75,
+                    "revenue_growth": 10.5,
+                    "net_profit_growth": -18.2,
+                    "current_ratio": 26.6,
+                    "quick_ratio": 22.73,
+                }
+            ],
+            "disclosures": [
+                {
+                    "code": "001270",
+                    "name": "*ST铖昌",
+                    "title": "2025年年度报告",
+                    "publish_date": "2026-04-17",
+                    "url": "http://www.cninfo.com.cn/report",
+                }
+            ],
+            "disclaimer": "财务报表和公告来自公开数据。",
+        }
+
+    monkeypatch.setattr(main, "financial_provider", lambda: "fake-provider", raising=False)
+    monkeypatch.setattr(main, "run_stock_financials", fake_run_stock_financials, raising=False)
+
+    response = main.stock_financials("001270", years=2, refresh=True)
+
+    assert response.code == "001270"
+    assert response.summary["latest_report_date"] == "20260331"
+    assert response.statements[0]["report_date"] == "20260331"
+    assert response.indicators[0]["roe"] == 3.95
+    assert response.disclosures[0]["title"] == "2025年年度报告"
+
+
 def test_history_ignores_one_row_cache_for_wide_date_range(tmp_path: Path, monkeypatch) -> None:
     import pandas as pd
 

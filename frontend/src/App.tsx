@@ -42,6 +42,7 @@ import {
   BellRing,
   CalendarDays,
   DatabaseZap,
+  FileText,
   Gauge,
   Layers3,
   LineChart,
@@ -70,6 +71,7 @@ import {
   fetchSectorFlow,
   fetchScreenReport,
   fetchScreenReports,
+  fetchStockFinancials,
   fetchStockSearch,
   fetchTask,
   runBacktest,
@@ -92,6 +94,7 @@ import type {
   ScreenResponse,
   ScreenResult,
   StockAnalysisResponse,
+  StockFinancialsResponse,
   StockSearchItem,
   TaskStatusResponse,
   TrendPoint
@@ -787,6 +790,17 @@ function StockAnalysisPage() {
     refetchInterval: stockChartMode === 'intraday' ? 60_000 : false,
     retry: false
   });
+  const stockFinancials = useQuery({
+    queryKey: ['stock-financials', analysis?.code, refreshStock],
+    queryFn: () => fetchStockFinancials({
+      symbol: analysis?.code ?? '',
+      years: 5,
+      refresh: refreshStock
+    }),
+    enabled: Boolean(analysis?.code),
+    staleTime: 10 * 60_000,
+    retry: false
+  });
 
   const dailyChartRows = useMemo<IntradayPoint[]>(() => {
     if (!analysis) {
@@ -1022,6 +1036,12 @@ function StockAnalysisPage() {
             />
           </Paper>
 
+          <StockFinancialsPanel
+            financials={stockFinancials.data}
+            loading={stockFinancials.isFetching && !stockFinancials.data}
+            error={stockFinancials.error instanceof Error ? stockFinancials.error.message : ''}
+          />
+
           <Alert color="gray" variant="light">
             {analysis.disclaimer}
           </Alert>
@@ -1035,6 +1055,169 @@ function StockAnalysisPage() {
         </Paper>
       )}
     </Stack>
+  );
+}
+
+function StockFinancialsPanel({
+  financials,
+  loading,
+  error
+}: {
+  financials?: StockFinancialsResponse;
+  loading: boolean;
+  error: string;
+}) {
+  if (loading) {
+    return (
+      <Paper className="opportunity-board financial-panel" withBorder>
+        <div className="empty-state refined">
+          <DatabaseZap size={20} />
+          <span>正在拉取财务报表和巨潮公告...</span>
+        </div>
+      </Paper>
+    );
+  }
+
+  if (error) {
+    return <TaskErrorAlert error={`财务数据加载失败：${error}`} />;
+  }
+
+  if (!financials) {
+    return null;
+  }
+
+  const latest = financials.summary;
+  const latestRow = financials.statements[0];
+
+  return (
+    <Paper className="opportunity-board financial-panel" withBorder>
+      <Group justify="space-between" align="flex-start" mb="md">
+        <div>
+          <Text fw={900}>财务报表与公告</Text>
+          <Text size="sm" c="dimmed">
+            最近 {financials.years} 年公开财报，来源 {financials.source}。
+          </Text>
+        </div>
+        <Badge color={financialToneColor(latest.tone)} variant="light">
+          {financialToneLabel(latest.tone)}
+        </Badge>
+      </Group>
+
+      <Tabs defaultValue="overview" className="financial-tabs" keepMounted={false}>
+        <Tabs.List>
+          <Tabs.Tab value="overview" leftSection={<Gauge size={15} />}>财务概览</Tabs.Tab>
+          <Tabs.Tab value="statements" leftSection={<DatabaseZap size={15} />}>三大报表</Tabs.Tab>
+          <Tabs.Tab value="reports" leftSection={<FileText size={15} />}>公告年报</Tabs.Tab>
+        </Tabs.List>
+
+        <Tabs.Panel value="overview" pt="md">
+          <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing="sm">
+            <StatusTile label="最新报告期" value={formatReportDate(latest.latest_report_date)} />
+            <StatusTile label="营业收入" value={formatMoney(latest.latest_revenue)} />
+            <StatusTile label="归母净利润" value={formatMoney(latest.latest_net_profit)} />
+            <StatusTile label="经营现金流" value={formatMoney(latest.latest_operating_cash_flow)} />
+            <StatusTile label="ROE" value={formatPct(latest.latest_roe)} />
+            <StatusTile label="资产负债率" value={formatPct(latest.latest_asset_liability_ratio)} />
+            <StatusTile label="营收同比" value={formatPct(latest.latest_revenue_growth)} />
+            <StatusTile label="净利同比" value={formatPct(latest.latest_net_profit_growth)} />
+          </SimpleGrid>
+
+          {latest.bullets.length ? (
+            <Alert color={financialToneColor(latest.tone)} variant="light" mt="md" icon={<Gauge size={18} />}>
+              <ul className="stock-advice-list financial-bullets">
+                {latest.bullets.map((item) => <li key={item}>{item}</li>)}
+              </ul>
+            </Alert>
+          ) : (
+            <Text size="sm" c="dimmed" mt="md">暂无足够指标形成财务摘要。</Text>
+          )}
+
+          {latestRow ? (
+            <Text size="xs" c="dimmed" mt="sm">
+              最新公告日 {formatReportDate(latestRow.announcement_date)}，审计状态 {latestRow.audit_status || '未披露'}。
+            </Text>
+          ) : null}
+        </Tabs.Panel>
+
+        <Tabs.Panel value="statements" pt="md">
+          {financials.statements.length ? (
+            <Table.ScrollContainer minWidth={860}>
+              <Table className="financial-table" verticalSpacing={8}>
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>报告期</Table.Th>
+                    <Table.Th>收入</Table.Th>
+                    <Table.Th>净利润</Table.Th>
+                    <Table.Th>经营现金流</Table.Th>
+                    <Table.Th>毛利率</Table.Th>
+                    <Table.Th>ROE</Table.Th>
+                    <Table.Th>负债率</Table.Th>
+                    <Table.Th>EPS</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {financials.statements.slice(0, 10).map((row) => (
+                    <Table.Tr key={row.report_date}>
+                      <Table.Td>{formatReportDate(row.report_date)}</Table.Td>
+                      <Table.Td>{formatMoney(row.revenue)}</Table.Td>
+                      <Table.Td>{formatMoney(row.net_profit)}</Table.Td>
+                      <Table.Td>{formatMoney(row.operating_cash_flow)}</Table.Td>
+                      <Table.Td>{formatPct(row.gross_margin)}</Table.Td>
+                      <Table.Td>{formatPct(row.roe)}</Table.Td>
+                      <Table.Td>{formatPct(row.asset_liability_ratio)}</Table.Td>
+                      <Table.Td>{formatNumber(row.eps)}</Table.Td>
+                    </Table.Tr>
+                  ))}
+                </Table.Tbody>
+              </Table>
+            </Table.ScrollContainer>
+          ) : (
+            <div className="empty-state refined">
+              <DatabaseZap size={18} />
+              <span>暂未取到可展示的财务报表。</span>
+            </div>
+          )}
+        </Tabs.Panel>
+
+        <Tabs.Panel value="reports" pt="md">
+          {financials.disclosures.length ? (
+            <div className="disclosure-list">
+              {financials.disclosures.map((report) => (
+                <div className="disclosure-row" key={`${report.publish_date}-${report.title}`}>
+                  <div className="disclosure-copy">
+                    <Tooltip label={report.title} multiline maw={360} openDelay={300}>
+                      <Text fw={900} title={report.title} className="disclosure-title">{report.title}</Text>
+                    </Tooltip>
+                    <Text size="xs" c="dimmed">
+                      {report.name || report.code} · {report.publish_date || '未披露日期'}
+                    </Text>
+                  </div>
+                  <Button
+                    component="a"
+                    href={report.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    variant="light"
+                    color="dark"
+                    size="xs"
+                    leftSection={<FileText size={14} />}
+                  >
+                    打开
+                  </Button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="empty-state refined">
+              <FileText size={18} />
+              <span>巨潮资讯暂未返回年报公告。</span>
+            </div>
+          )}
+        </Tabs.Panel>
+      </Tabs>
+
+      <Text size="xs" c="dimmed" mt="md">{financials.disclaimer}</Text>
+    </Paper>
   );
 }
 
@@ -2052,6 +2235,42 @@ function SectorStockList({ rows }: { rows: SectorStockRow[] }) {
       ))}
     </Stack>
   );
+}
+
+function financialToneColor(tone?: string | null): 'teal' | 'orange' | 'red' | 'blue' | 'gray' {
+  if (tone === 'healthy') {
+    return 'teal';
+  }
+  if (tone === 'watch_cash') {
+    return 'orange';
+  }
+  if (tone === 'weak') {
+    return 'red';
+  }
+  if (tone === 'neutral') {
+    return 'blue';
+  }
+  return 'gray';
+}
+
+function financialToneLabel(tone?: string | null): string {
+  if (tone === 'healthy') {
+    return '财务稳健';
+  }
+  if (tone === 'watch_cash') {
+    return '现金流观察';
+  }
+  if (tone === 'weak') {
+    return '盈利承压';
+  }
+  if (tone === 'neutral') {
+    return '中性观察';
+  }
+  return '数据观察';
+}
+
+function formatReportDate(value?: string | null): string {
+  return displayTradeDate(value ?? undefined);
 }
 
 function alertTone(tone: string): 'red' | 'orange' | 'blue' | 'teal' | 'gray' {
