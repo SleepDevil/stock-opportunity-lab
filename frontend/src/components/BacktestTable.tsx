@@ -1,4 +1,4 @@
-import { Badge, Group, ScrollArea, Skeleton, Stack, Table, Text, ThemeIcon } from '@mantine/core';
+import { Badge, Group, ScrollArea, Skeleton, Stack, Table, Text, ThemeIcon, Tooltip } from '@mantine/core';
 import { CircleSlash, LineChart, Target } from 'lucide-react';
 
 import type { BacktestRow } from '../types/api';
@@ -63,9 +63,17 @@ export function BacktestTable({ rows, loading = false }: { rows: BacktestRow[]; 
                 </div>
               </Table.Td>
               <Table.Td>
-                <Badge color={row.是否买入 ? 'teal' : 'gray'} variant="light" leftSection={row.是否买入 ? <Target size={12} /> : <CircleSlash size={12} />}>
-                  {row.买入方式}
-                </Badge>
+                <Tooltip label={row.买入方式} withArrow disabled={!row.买入方式} openDelay={250}>
+                  <Badge
+                    className="backtest-status-badge"
+                    color={row.是否买入 ? 'teal' : 'gray'}
+                    variant="light"
+                    leftSection={row.是否买入 ? <Target size={12} /> : <CircleSlash size={12} />}
+                    title={row.买入方式}
+                  >
+                    {row.买入方式}
+                  </Badge>
+                </Tooltip>
               </Table.Td>
               <Table.Td>{formatNumber(row.模拟买入价)}</Table.Td>
               <Table.Td className={classForSigned(row['收盘浮盈%'])}>{formatPct(row['收盘浮盈%'])}</Table.Td>

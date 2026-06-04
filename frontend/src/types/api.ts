@@ -6,6 +6,8 @@ export type TrendPoint = {
   收盘?: number | null;
   最高?: number | null;
   最低?: number | null;
+  成交量?: number | null;
+  成交额?: number | null;
 };
 
 export type IntradayPoint = {
@@ -26,6 +28,84 @@ export type IntradayResponse = {
   trade_date?: string | null;
   source: string;
   rows: IntradayPoint[];
+};
+
+export type IntradayAlert = {
+  id: string;
+  code: string;
+  name: string;
+  signal: string;
+  level: string;
+  tone: string;
+  title: string;
+  detail: string;
+  triggered_at?: string | null;
+  latest_price?: number | null;
+  reference_price?: number | null;
+  pct_from_reference?: number | null;
+  plan_low?: number | null;
+  plan_high?: number | null;
+  stop_price?: number | null;
+  breakout_price?: number | null;
+};
+
+export type IntradayAlertsResponse = {
+  screen_date: string;
+  trade_date: string;
+  monitor_scope: 'candidates' | 'targets';
+  generated_at: string;
+  candidate_count: number;
+  alert_count: number;
+  alerts: IntradayAlert[];
+};
+
+export type ScreenReportsResponse = {
+  dates: string[];
+  latest?: string | null;
+};
+
+export type SectorScope = 'candidates' | 'targets';
+
+export type SectorAggregateRow = {
+  name: string;
+  count: number;
+  amount: number;
+  amount_share: number;
+  avg_score: number;
+  avg_pct_change: number;
+  avg_turnover: number;
+  avg_volume_ratio: number;
+  avg_float_market_cap: number;
+  top_names: string[];
+};
+
+export type SectorStockRow = {
+  code: string;
+  name: string;
+  board: string;
+  industry?: string | null;
+  tag?: string | null;
+  amount: number;
+  score: number;
+  pct_change: number;
+  turnover: number;
+  volume_ratio: number;
+};
+
+export type SectorFlowResponse = {
+  trade_date: string;
+  scope: SectorScope;
+  source_count: number;
+  total_amount: number;
+  avg_score: number;
+  avg_pct_change: number;
+  avg_turnover: number;
+  avg_volume_ratio: number;
+  leader?: string | null;
+  board_rows: SectorAggregateRow[];
+  industry_rows: SectorAggregateRow[];
+  tag_rows: SectorAggregateRow[];
+  top_candidates: SectorStockRow[];
 };
 
 export type Candidate = {
@@ -79,9 +159,11 @@ export type BacktestRow = Candidate & {
 };
 
 export type ScreenResponse = {
+  status: 'completed';
   trade_date: string;
   raw_count: number;
   filtered_count: number;
+  target_count?: number;
   board_excluded_count?: number;
   excluded_boards?: string[];
   candidates: Candidate[];
@@ -89,6 +171,24 @@ export type ScreenResponse = {
   ai_payload: unknown;
   analysis: string;
 };
+
+export type TaskAcceptedResponse = {
+  status: 'queued' | 'running' | 'completed' | 'failed';
+  task_id: string;
+  kind: string;
+  trade_date: string;
+  message: string;
+  notification_email?: string | null;
+};
+
+export type TaskStatusResponse = TaskAcceptedResponse & {
+  created_at: string;
+  updated_at: string;
+  result?: ScreenResponse | Record<string, unknown> | null;
+  error?: string | null;
+};
+
+export type ScreenResult = ScreenResponse | TaskAcceptedResponse;
 
 export type BacktestResponse = {
   screen_date: string;
@@ -111,8 +211,84 @@ export type BacktestResponse = {
   analysis: string;
 };
 
+export type StockAnalysisResponse = {
+  query: string;
+  trade_date: string;
+  code: string;
+  name: string;
+  board?: string | null;
+  board_code?: string | null;
+  latest: {
+    price?: number | null;
+    pct_change?: number | null;
+    amount?: number | null;
+    turnover?: number | null;
+    volume_ratio?: number | null;
+    float_market_cap?: number | null;
+    total_market_cap?: number | null;
+  };
+  plan: {
+    计划低吸价?: number | null;
+    计划买入上限?: number | null;
+    突破确认价?: number | null;
+    高开放弃价?: number | null;
+    止损参考价?: number | null;
+    第一止盈价?: number | null;
+    '单票仓位上限%'?: number | null;
+    '单笔风险预算%'?: number | null;
+    买入策略?: string | null;
+  };
+  position?: {
+    quantity: number;
+    cost_price: number;
+    market_value: number;
+    cost_value: number;
+    floating_pnl: number;
+    floating_pnl_pct: number;
+  } | null;
+  trend: {
+    days: number;
+    pct_5?: number | null;
+    pct_20?: number | null;
+    pct_60?: number | null;
+    ma_5?: number | null;
+    ma_20?: number | null;
+    drawdown_from_60d_high?: number | null;
+    position_in_60d_range?: number | null;
+  };
+  trend_points: TrendPoint[];
+  recommendation: {
+    action: string;
+    tone: string;
+    title: string;
+    summary: string;
+    bullets: string[];
+  };
+  disclaimer: string;
+};
+
+export type StockSearchItem = {
+  code: string;
+  name: string;
+  board?: string | null;
+  board_code?: string | null;
+  initials: string;
+  latest_price?: number | null;
+  pct_change?: number | null;
+};
+
+export type StockSearchResponse = {
+  query: string;
+  trade_date: string;
+  results: StockSearchItem[];
+};
+
 export type AppConfig = {
   data_dir: string;
   screen: Record<string, unknown>;
   strategy: Record<string, unknown>;
+};
+
+export type NotificationSettings = {
+  user_email?: string | null;
 };

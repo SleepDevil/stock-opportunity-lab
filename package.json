@@ -5,8 +5,8 @@
   "description": "AkShare-powered A-share opportunity screening, buy planning, and backtesting web app.",
   "scripts": {
     "dev": "concurrently -n api,web -c cyan,green \"npm run dev:api\" \"npm run dev:web\"",
-    "dev:api": "cd backend && ../.venv/bin/uvicorn app.main:app --reload --host 127.0.0.1 --port 8000",
-    "dev:web": "cd frontend && npm run dev -- --host 127.0.0.1",
+    "dev:api": "./.venv/bin/python -m uvicorn app.main:app --app-dir backend --reload --host 0.0.0.0 --port 8000",
+    "dev:web": "cd frontend && npm run dev -- --host 0.0.0.0",
     "setup": "python3 -m venv .venv && ./.venv/bin/python -m pip install --upgrade pip && ./.venv/bin/python -m pip install -e \"backend[test]\" && npm install && npm --prefix frontend install",
     "test": "npm run test:api && npm run test:web",
     "test:api": "./.venv/bin/python -m pytest backend/tests",

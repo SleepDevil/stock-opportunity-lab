@@ -61,10 +61,11 @@ class AkShareProvider:
     def spot(self, trade_date: str, refresh: bool = False) -> pd.DataFrame:
         self.config.ensure_dirs()
         normalized = normalize_trade_date(trade_date)
-        if normalized in self._spot_memory and not refresh:
-            return self._spot_memory[normalized].copy()
         cache = self.config.raw_dir / f"spot_{normalized}.csv"
-        if cache.exists() and not refresh:
+        cache_usable = should_use_spot_cache(normalized, cache)
+        if normalized in self._spot_memory and not refresh and cache_usable:
+            return self._spot_memory[normalized].copy()
+        if cache_usable and not refresh:
             df = pd.read_csv(cache, dtype={"代码": str})
             self._spot_memory[normalized] = df
             return df.copy()
@@ -176,7 +177,10 @@ class AkShareProvider:
         suffix = adjust or "none"
         cache = self.config.history_dir / f"{symbol}_{start}_{end}_{suffix}.csv"
         if cache.exists() and not refresh:
-            return pd.read_csv(cache, dtype={"股票代码": str})
+            cached = pd.read_csv(cache, dtype={"股票代码": str})
+            if history_cache_usable(cached, start, end):
+                return cached
+            cache.unlink(missing_ok=True)
 
         code = normalize_stock_code(symbol)
         errors: list[str] = []
@@ -197,12 +201,12 @@ class AkShareProvider:
                 ),
             ),
             (
-                "spot snapshot",
-                lambda: self.history_from_spot_snapshot(code, start, end),
-            ),
-            (
                 "AkShare Tencent",
                 lambda: tencent_history_via_akshare(self._ak(), code, start, end, adjust),
+            ),
+            (
+                "spot snapshot",
+                lambda: self.history_from_spot_snapshot(code, start, end),
             ),
         ]
 
@@ -216,7 +220,8 @@ class AkShareProvider:
                     empty = df
                     errors.append(f"{label}: empty")
                     continue
-                df.to_csv(cache, index=False, encoding="utf-8-sig")
+                if label != "spot snapshot" or history_cache_usable(df, start, end):
+                    df.to_csv(cache, index=False, encoding="utf-8-sig")
                 return df
             except Exception as exc:
                 errors.append(f"{label}: {exc}")
@@ -458,6 +463,9 @@ SPOT_COLUMNS = [
     "60日涨跌幅",
     "年初至今涨跌幅",
 ]
+CURRENT_SPOT_CACHE_TTL_SECONDS = 5 * 60
+MARKET_CLOSE_STABLE_HOUR = 15
+MARKET_CLOSE_STABLE_MINUTE = 5
 
 
 def empty_spot_frame() -> pd.DataFrame:
@@ -470,6 +478,33 @@ def empty_history_frame() -> pd.DataFrame:
 
 def empty_intraday_frame() -> pd.DataFrame:
     return pd.DataFrame(columns=INTRADAY_COLUMNS)
+
+
+def should_use_spot_cache(
+    trade_date: str,
+    cache: Path,
+    now: datetime | None = None,
+    intraday_ttl_seconds: int = CURRENT_SPOT_CACHE_TTL_SECONDS,
+) -> bool:
+    if not cache.exists():
+        return False
+    current = now or datetime.now()
+    normalized = normalize_trade_date(trade_date)
+    if normalized != current.strftime("%Y%m%d"):
+        return True
+
+    cache_mtime = datetime.fromtimestamp(cache.stat().st_mtime)
+    close_cutoff = current.replace(
+        hour=MARKET_CLOSE_STABLE_HOUR,
+        minute=MARKET_CLOSE_STABLE_MINUTE,
+        second=0,
+        microsecond=0,
+    )
+    if current >= close_cutoff:
+        return cache_mtime >= close_cutoff
+
+    age_seconds = (current - cache_mtime).total_seconds()
+    return 0 <= age_seconds <= intraday_ttl_seconds
 
 
 def available_spot_snapshot_dates(raw_dir: Path) -> list[str]:
@@ -724,6 +759,18 @@ def daily_to_intraday_frame(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
             }
         )
     return normalize_intraday_frame(pd.DataFrame(rows), symbol)
+
+
+def history_cache_usable(df: pd.DataFrame, start_date: str, end_date: str) -> bool:
+    if df.empty:
+        return False
+    if len(df) > 1:
+        return True
+    try:
+        span_days = (datetime.strptime(end_date, "%Y%m%d") - datetime.strptime(start_date, "%Y%m%d")).days
+    except ValueError:
+        return True
+    return span_days <= 14
 
 
 def sina_symbol(symbol: str) -> str:
