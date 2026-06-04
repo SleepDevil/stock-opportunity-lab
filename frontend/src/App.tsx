@@ -12,17 +12,20 @@ import {
   Paper,
   Progress,
   ScrollArea,
+  SegmentedControl,
   SimpleGrid,
   Stack,
   Switch,
   Tabs,
   Table,
   Text,
+  TextInput,
   ThemeIcon,
   Title,
   Tooltip
 } from '@mantine/core';
 import { DatePickerInput } from '@mantine/dates';
+import { notifications } from '@mantine/notifications';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import {
   Link,
@@ -42,8 +45,10 @@ import {
   Gauge,
   Layers3,
   LineChart,
+  Mail,
   RefreshCw,
   Search,
+  Send,
   Settings2,
   ShieldAlert,
   Target,
@@ -57,12 +62,43 @@ import { BacktestTable } from './components/BacktestTable';
 import { CandidateTable } from './components/CandidateTable';
 import { ConfigPanel } from './components/ConfigPanel';
 import { IntradayChart } from './components/IntradayChart';
-import { fetchConfig, fetchIntraday, runBacktest, runScreen } from './lib/api';
+import {
+  fetchConfig,
+  fetchIntraday,
+  fetchIntradayAlerts,
+  fetchNotificationSettings,
+  fetchSectorFlow,
+  fetchScreenReport,
+  fetchScreenReports,
+  fetchStockSearch,
+  fetchTask,
+  runBacktest,
+  runScreen,
+  runStockAnalysis,
+  saveNotificationSettings,
+  sendTestNotification
+} from './lib/api';
 import { classForSigned, displayTradeDate, formatMoney, formatNumber, formatPct, todayInputValue, toTradeDate } from './lib/format';
-import type { AppConfig, BacktestResponse, Candidate, ScreenResponse, TrendPoint } from './types/api';
+import type {
+  AppConfig,
+  BacktestResponse,
+  Candidate,
+  IntradayAlert,
+  IntradayPoint,
+  SectorAggregateRow,
+  SectorFlowResponse,
+  SectorScope,
+  SectorStockRow,
+  ScreenResponse,
+  ScreenResult,
+  StockAnalysisResponse,
+  StockSearchItem,
+  TaskStatusResponse,
+  TrendPoint
+} from './types/api';
 import './styles.css';
 
-type AppRoutePath = '/' | '/backtest' | '/alerts' | '/sectors' | '/settings';
+type AppRoutePath = '/' | '/stock' | '/backtest' | '/alerts' | '/sectors' | '/settings';
 
 type ScreenPreferences = {
   boardExclusionEnabled: boolean;
@@ -94,6 +130,7 @@ type AppState = {
   config?: AppConfig;
   screen?: ScreenResponse;
   backtest?: BacktestResponse;
+  activeScreenTask?: TaskStatusResponse;
   candidates: Candidate[];
   topCandidate?: Candidate;
   market: MarketSnapshot;
@@ -104,6 +141,7 @@ type AppState = {
   selectedCandidate: Candidate | null;
   setSelectedCandidate: (value: Candidate | null) => void;
   handleScreen: () => void;
+  runScreenWithOptions: (options?: { date?: string; refresh?: boolean; limit?: number; enrich?: boolean }) => void;
   handleBacktest: () => void;
   screenLoading: boolean;
   backtestLoading: boolean;
@@ -113,6 +151,7 @@ type AppState = {
 
 const navItems = [
   { to: '/', label: '今日机会', icon: TrendingUp },
+  { to: '/stock', label: '个股分析', icon: Search },
   { to: '/backtest', label: '回测实验室', icon: LineChart },
   { to: '/alerts', label: '消息异动', icon: BellRing },
   { to: '/sectors', label: '板块资金', icon: Layers3 },
@@ -128,9 +167,13 @@ const pageMeta: Record<AppRoutePath, { title: string; subtitle: string }> = {
     title: '回测实验室 - 次日验证',
     subtitle: '把选股日和实际交易日拆开验证，避免只看漂亮评分。'
   },
+  '/stock': {
+    title: '个股分析 - 持仓决策台',
+    subtitle: '输入股票名称或代码，结合近期走势、策略价格和个人持仓，生成规则化买卖建议。'
+  },
   '/alerts': {
     title: '消息异动 - 量价告警',
-    subtitle: '基于当前观察池生成成交额、换手、量比和风险阈值告警。'
+    subtitle: '盘中轮询观察池分钟行情，捕捉低吸、深跌、突破、放量和破位风险。'
   },
   '/sectors': {
     title: '板块资金 - 候选池归因',
@@ -230,6 +273,19 @@ function sanitizeBoards(values?: unknown): string[] {
   return boardOptions.map((item) => item.value).filter((value) => values.includes(value));
 }
 
+function isQueuedTask(result: ScreenResult): result is Exclude<ScreenResult, ScreenResponse> {
+  return 'task_id' in result;
+}
+
+function isScreenResponse(value: unknown): value is ScreenResponse {
+  return Boolean(
+    value
+    && typeof value === 'object'
+    && Array.isArray((value as ScreenResponse).candidates)
+    && typeof (value as ScreenResponse).trade_date === 'string'
+  );
+}
+
 function AppShell() {
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (state) => state.location.pathname }) as AppRoutePath;
@@ -246,11 +302,22 @@ function AppShell() {
   const [screenPreferences, setScreenPreferences] = useState<ScreenPreferences>(readScreenPreferences);
   const [screen, setScreen] = useState<ScreenResponse | undefined>(initialScreen);
   const [backtest, setBacktest] = useState<BacktestResponse>();
+  const [activeScreenTaskId, setActiveScreenTaskId] = useState<string | null>(null);
   const [selectedCandidate, setSelectedCandidate] = useState<Candidate | null>(() => readInspectCandidate(initialScreen));
 
   const configQuery = useQuery({
     queryKey: ['config'],
     queryFn: fetchConfig
+  });
+
+  const screenTaskQuery = useQuery({
+    queryKey: ['task', activeScreenTaskId],
+    queryFn: () => fetchTask(activeScreenTaskId ?? ''),
+    enabled: Boolean(activeScreenTaskId),
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status === 'completed' || status === 'failed' ? false : 5000;
+    }
   });
 
   const effectiveExcludedBoards = screenPreferences.boardExclusionEnabled ? screenPreferences.excludedBoards : [];
@@ -259,10 +326,18 @@ function AppShell() {
   const screenMutation = useMutation({
     mutationFn: runScreen,
     onSuccess: (result) => {
-      setScreen(result);
-      writeLastScreen(result);
-      setScreenDate(scanDate);
-      setSelectedCandidate(null);
+      if (isQueuedTask(result)) {
+        setActiveScreenTaskId(result.task_id);
+        notifications.show({
+          color: result.notification_email ? 'blue' : 'orange',
+          title: '已转入后台任务',
+          message: result.notification_email
+            ? `${displayTradeDate(result.trade_date)} 数据重建会继续运行，完成后通知 ${result.notification_email}。`
+            : `${displayTradeDate(result.trade_date)} 数据重建会继续运行；还没有配置飞书邮箱，完成后只能在页面轮询状态。`
+        });
+        return;
+      }
+      applyScreenResult(result, displayTradeDate(result.trade_date));
     }
   });
 
@@ -274,6 +349,34 @@ function AppShell() {
   useEffect(() => {
     window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(screenPreferences));
   }, [screenPreferences]);
+
+  useEffect(() => {
+    const task = screenTaskQuery.data;
+    if (!task) {
+      return;
+    }
+    if (task.status === 'completed') {
+      if (isScreenResponse(task.result)) {
+        applyScreenResult(task.result, displayTradeDate(task.result.trade_date));
+      }
+      notifications.show({
+        color: 'teal',
+        title: '后台扫描已完成',
+        message: task.notification_email
+          ? `${displayTradeDate(task.trade_date)} 数据已生成，飞书机器人会通知 ${task.notification_email}。`
+          : `${displayTradeDate(task.trade_date)} 数据已生成；当前未配置飞书邮箱。`
+      });
+      setActiveScreenTaskId(null);
+    }
+    if (task.status === 'failed') {
+      notifications.show({
+        color: 'red',
+        title: '后台扫描失败',
+        message: task.error || task.message
+      });
+      setActiveScreenTaskId(null);
+    }
+  }, [screenTaskQuery.data]);
 
   const candidates = screen?.candidates ?? [];
   const topCandidate = candidates[0];
@@ -319,22 +422,34 @@ function AppShell() {
     };
   }, [candidates, screen, scanDate]);
 
-  function handleScreen() {
+  function runScreenWithOptions(options: { date?: string; refresh?: boolean; limit?: number; enrich?: boolean } = {}) {
     screenMutation.mutate({
-      date: toTradeDate(scanDate),
-      refresh,
-      limit,
-      enrich,
+      date: options.date ?? toTradeDate(scanDate),
+      refresh: options.refresh ?? refresh,
+      limit: options.limit ?? limit,
+      enrich: options.enrich ?? enrich,
       exclude_boards: effectiveExcludedBoards
     });
+  }
+
+  function handleScreen() {
+    runScreenWithOptions();
   }
 
   function handleBacktest() {
     backtestMutation.mutate({
       screen_date: toTradeDate(screenDate),
       actual_date: toTradeDate(actualDate),
-      refresh
+      refresh,
+      exclude_boards: effectiveExcludedBoards
     });
+  }
+
+  function applyScreenResult(result: ScreenResponse, inputDate: string) {
+    setScreen(result);
+    writeLastScreen(result);
+    setScreenDate(inputDate);
+    setSelectedCandidate(null);
   }
 
   function closeEvidenceDrawer() {
@@ -368,6 +483,7 @@ function AppShell() {
     config: configQuery.data,
     screen,
     backtest,
+    activeScreenTask: screenTaskQuery.data,
     candidates,
     topCandidate,
     market,
@@ -378,6 +494,7 @@ function AppShell() {
     selectedCandidate,
     setSelectedCandidate,
     handleScreen,
+    runScreenWithOptions,
     handleBacktest,
     screenLoading: screenMutation.isPending,
     backtestLoading: backtestMutation.isPending,
@@ -465,6 +582,7 @@ function OpportunityPage() {
     enrich,
     setEnrich,
     screen,
+    activeScreenTask,
     candidates,
     topCandidate,
     backtest,
@@ -546,6 +664,7 @@ function OpportunityPage() {
       </SimpleGrid>
 
       <TaskErrorAlert error={taskError} />
+      <TaskStatusAlert task={activeScreenTask} />
 
       <section className="command-grid">
         <Paper className="opportunity-board" withBorder>
@@ -576,6 +695,349 @@ function OpportunityPage() {
   );
 }
 
+function StockSuggestionPanel({
+  items,
+  loading,
+  error,
+  selectedCode,
+  onSelect
+}: {
+  items: StockSearchItem[];
+  loading: boolean;
+  error: string;
+  selectedCode?: string;
+  onSelect: (item: StockSearchItem) => void;
+}) {
+  return (
+    <div className="stock-suggestion-panel" role="listbox">
+      {loading ? <Text size="xs" c="dimmed">搜索候选中...</Text> : null}
+      {!loading && error ? <Text size="xs" c="red">{error}</Text> : null}
+      {!loading && !error && items.length === 0 ? <Text size="xs" c="dimmed">没有匹配的股票</Text> : null}
+      {!loading && !error ? items.map((item) => (
+        <button
+          key={item.code}
+          type="button"
+          className={`stock-suggestion-item ${selectedCode === item.code ? 'active' : ''}`}
+          title={`${item.name} ${item.code} · ${item.initials}`}
+          onClick={() => onSelect(item)}
+        >
+          <span className="stock-suggestion-name">
+            <strong>{item.name}</strong>
+            <em>{item.code}</em>
+          </span>
+          <span className="stock-suggestion-tags">
+            <Badge size="sm" color={boardColor(item.board_code ?? undefined)} variant="light">
+              {item.board ?? '其他'}
+            </Badge>
+            <span className="stock-suggestion-meta">{item.initials}</span>
+            <span className={classForSigned(item.pct_change)}>{formatPct(item.pct_change)}</span>
+          </span>
+        </button>
+      )) : null}
+    </div>
+  );
+}
+
+function StockAnalysisPage() {
+  const [query, setQuery] = useState('');
+  const [tradeDate, setTradeDate] = useState(todayInputValue());
+  const [quantity, setQuantity] = useState<number | undefined>();
+  const [costPrice, setCostPrice] = useState<number | undefined>();
+  const [refreshStock, setRefreshStock] = useState(false);
+  const [selectedSearchItem, setSelectedSearchItem] = useState<StockSearchItem>();
+  const [analysis, setAnalysis] = useState<StockAnalysisResponse>();
+  const trimmedQuery = query.trim();
+  const selectedQueryActive = Boolean(
+    selectedSearchItem && [selectedSearchItem.name, selectedSearchItem.code].includes(trimmedQuery)
+  );
+  const showStockSuggestions = trimmedQuery.length > 0 && !selectedQueryActive;
+  const stockSearch = useQuery({
+    queryKey: ['stock-search', trimmedQuery, tradeDate],
+    queryFn: () => fetchStockSearch({
+      query: trimmedQuery,
+      date: toTradeDate(tradeDate),
+      limit: 8
+    }),
+    enabled: showStockSuggestions,
+    staleTime: 60_000,
+    retry: false
+  });
+  const stockMutation = useMutation({
+    mutationFn: runStockAnalysis,
+    onSuccess: (result) => {
+      setAnalysis(result);
+      notifications.show({
+        color: alertTone(result.recommendation.tone),
+        title: `${result.name} 分析已更新`,
+        message: result.recommendation.title
+      });
+    }
+  });
+  const stockChartMode = analysis ? resolveStockChartMode(analysis.trade_date) : 'daily';
+  const stockIntraday = useQuery({
+    queryKey: ['stock-analysis-intraday', analysis?.code, analysis?.trade_date, refreshStock],
+    queryFn: () => fetchIntraday({
+      symbol: analysis?.code ?? '',
+      period: '1',
+      date: analysis?.trade_date,
+      source: 'em',
+      refresh: refreshStock
+    }),
+    enabled: Boolean(analysis && stockChartMode === 'intraday'),
+    refetchInterval: stockChartMode === 'intraday' ? 60_000 : false,
+    retry: false
+  });
+
+  const dailyChartRows = useMemo<IntradayPoint[]>(() => {
+    if (!analysis) {
+      return [];
+    }
+    return analysis.trend_points.map((point) => ({
+      时间: point.日期,
+      股票代码: analysis.code,
+      开盘: point.开盘,
+      收盘: point.收盘,
+      最高: point.最高,
+      最低: point.最低,
+      成交量: point.成交量 ?? null,
+      成交额: point.成交额 ?? null,
+      均价: null
+    }));
+  }, [analysis]);
+  const chartRows = stockChartMode === 'intraday' ? (stockIntraday.data?.rows ?? []) : dailyChartRows;
+  const chartLoading = stockChartMode === 'intraday' && stockIntraday.isFetching && !stockIntraday.data;
+  const chartError = stockChartMode === 'intraday' && stockIntraday.error instanceof Error
+    ? stockIntraday.error.message
+    : '';
+
+  function handleAnalyzeStock() {
+    const trimmed = query.trim();
+    if (!trimmed) {
+      notifications.show({
+        color: 'orange',
+        title: '请输入股票',
+        message: '可以输入股票名称或 6 位代码。'
+      });
+      return;
+    }
+    const selectedQuery = selectedSearchItem && [selectedSearchItem.name, selectedSearchItem.code].includes(trimmed)
+      ? selectedSearchItem.code
+      : trimmed;
+    stockMutation.mutate({
+      query: selectedQuery,
+      trade_date: toTradeDate(tradeDate),
+      refresh: refreshStock,
+      quantity: quantity ?? null,
+      cost_price: costPrice ?? null
+    });
+  }
+
+  function handleSelectStockSuggestion(item: StockSearchItem) {
+    setSelectedSearchItem(item);
+    setQuery(item.name);
+  }
+
+  return (
+    <Stack gap="lg">
+      <Paper className="operation-card" withBorder>
+        <Group justify="space-between" align="flex-start" mb="md">
+          <div>
+            <Text fw={900}>单股查询</Text>
+            <Text size="sm" c="dimmed">支持名称或代码；持仓信息只用于本地规则分析，不连接券商。</Text>
+          </div>
+          <Badge color="orange" variant="light">不构成投资建议</Badge>
+        </Group>
+        <div className="stock-input-grid">
+          <div className="stock-search-box">
+            <TextInput
+              label="股票名称 / 代码 / 首字母"
+              placeholder="例如 华盛昌 / 002980 / hsc"
+              value={query}
+              leftSection={<Search size={15} />}
+              onChange={(event) => {
+                setQuery(event.currentTarget.value);
+                setSelectedSearchItem(undefined);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  handleAnalyzeStock();
+                }
+              }}
+            />
+            {showStockSuggestions ? (
+              <StockSuggestionPanel
+                items={stockSearch.data?.results ?? []}
+                loading={stockSearch.isFetching}
+                error={stockSearch.error instanceof Error ? stockSearch.error.message : ''}
+                selectedCode={selectedSearchItem?.code}
+                onSelect={handleSelectStockSuggestion}
+              />
+            ) : null}
+          </div>
+          <DatePickerInput
+            label="分析日期"
+            value={tradeDate}
+            valueFormat="YYYY-MM-DD"
+            locale="zh-cn"
+            dropdownType="popover"
+            leftSection={<CalendarDays size={14} />}
+            onChange={(value) => value && setTradeDate(value)}
+          />
+          <NumberInput
+            label="持仓数量"
+            min={0}
+            placeholder="可选"
+            value={quantity}
+            onChange={(value) => setQuantity(typeof value === 'number' ? value : undefined)}
+          />
+          <NumberInput
+            label="持仓成本"
+            min={0}
+            decimalScale={2}
+            placeholder="可选"
+            value={costPrice}
+            onChange={(value) => setCostPrice(typeof value === 'number' ? value : undefined)}
+          />
+          <div className="stock-action-column">
+            <Switch label="刷新数据源" checked={refreshStock} onChange={(event) => setRefreshStock(event.currentTarget.checked)} />
+            <Button fullWidth color="dark" leftSection={<Search size={16} />} onClick={handleAnalyzeStock} loading={stockMutation.isPending}>
+              开始分析
+            </Button>
+          </div>
+        </div>
+      </Paper>
+
+      <TaskErrorAlert error={stockMutation.error instanceof Error ? stockMutation.error.message : ''} />
+
+      {analysis ? (
+        <>
+          <section className="stock-analysis-grid">
+            <Paper className="opportunity-board stock-summary-card" withBorder>
+              <Group justify="space-between" align="flex-start" mb="md">
+                <div>
+                  <Group gap="xs">
+                    <Title order={2}>{analysis.name}</Title>
+                    <Text size="lg" c="dimmed">{analysis.code}</Text>
+                    {analysis.board ? <Badge color={boardColor(analysis.board_code ?? undefined)} variant="light">{analysis.board}</Badge> : null}
+                  </Group>
+                  <Text size="sm" c="dimmed">{displayTradeDate(analysis.trade_date)} 收盘口径</Text>
+                </div>
+                <Badge color={alertTone(analysis.recommendation.tone)} variant="light">{analysis.recommendation.action}</Badge>
+              </Group>
+              <SimpleGrid cols={{ base: 2, md: 4 }} spacing="sm">
+                <StatusTile label="最新价" value={formatNumber(analysis.latest.price)} />
+                <StatusTile label="涨跌幅" value={formatPct(analysis.latest.pct_change)} />
+                <StatusTile label="成交额" value={formatMoney(analysis.latest.amount)} />
+                <StatusTile label="量比 / 换手" value={`${formatNumber(analysis.latest.volume_ratio, 2)} / ${formatPct(analysis.latest.turnover)}`} />
+              </SimpleGrid>
+              <Divider my="md" />
+              <Alert
+                color={alertTone(analysis.recommendation.tone)}
+                variant="light"
+                icon={<Target size={18} />}
+                title={analysis.recommendation.title}
+              >
+                <Text size="sm">{analysis.recommendation.summary}</Text>
+                <ul className="stock-advice-list">
+                  {analysis.recommendation.bullets.map((item) => <li key={item}>{item}</li>)}
+                </ul>
+              </Alert>
+            </Paper>
+
+            <Paper className="decision-stack stock-side-card" withBorder>
+              <Text fw={900} mb="xs">持仓测算</Text>
+              {analysis.position ? (
+                <Stack gap="sm">
+                  <StatusTile label="持仓市值" value={formatMoney(analysis.position.market_value)} />
+                  <StatusTile label="浮动盈亏" value={formatMoney(analysis.position.floating_pnl)} />
+                  <MetricBar label="浮盈比例" value={Math.max(0, Math.min(100, 50 + analysis.position.floating_pnl_pct * 2))} suffix={formatPct(analysis.position.floating_pnl_pct)} color={analysis.position.floating_pnl >= 0 ? 'teal' : 'red'} />
+                  <Text size="xs" c="dimmed">
+                    数量 {formatNumber(analysis.position.quantity, 0)}，成本 {formatNumber(analysis.position.cost_price)}。
+                  </Text>
+                </Stack>
+              ) : (
+                <div className="empty-state refined">
+                  <Target size={18} />
+                  <span>输入持仓数量和成本后，会显示盈亏、止盈止损和仓位建议。</span>
+                </div>
+              )}
+            </Paper>
+          </section>
+
+          <SimpleGrid cols={{ base: 1, lg: 2 }} spacing="md">
+            <Paper className="opportunity-board" withBorder>
+              <Group justify="space-between" align="flex-start" mb="md">
+                <div>
+                  <Text fw={900}>策略价格</Text>
+                  <Text size="sm" c="dimmed">沿用当前系统策略参数生成，不是券商委托。</Text>
+                </div>
+                <ThemeIcon color="teal" variant="light"><Target size={18} /></ThemeIcon>
+              </Group>
+              <SimpleGrid cols={2} spacing="sm">
+                <StatusTile label="低吸区间" value={`${formatNumber(analysis.plan.计划低吸价)} - ${formatNumber(analysis.plan.计划买入上限)}`} />
+                <StatusTile label="突破确认" value={formatNumber(analysis.plan.突破确认价)} />
+                <StatusTile label="高开放弃" value={formatNumber(analysis.plan.高开放弃价)} />
+                <StatusTile label="止损 / 止盈" value={`${formatNumber(analysis.plan.止损参考价)} / ${formatNumber(analysis.plan.第一止盈价)}`} />
+              </SimpleGrid>
+              <Text size="sm" c="dimmed" mt="md">{analysis.plan.买入策略}</Text>
+            </Paper>
+
+            <Paper className="opportunity-board" withBorder>
+              <Group justify="space-between" align="flex-start" mb="md">
+                <div>
+                  <Text fw={900}>近期趋势</Text>
+                  <Text size="sm" c="dimmed">用最近可得日 K 计算，不补假数据。</Text>
+                </div>
+                <ThemeIcon color="blue" variant="light"><LineChart size={18} /></ThemeIcon>
+              </Group>
+              <SimpleGrid cols={2} spacing="sm">
+                <StatusTile label="5日 / 20日" value={`${formatPct(analysis.trend.pct_5)} / ${formatPct(analysis.trend.pct_20)}`} />
+                <StatusTile label="60日涨跌" value={formatPct(analysis.trend.pct_60)} />
+                <StatusTile label="MA5 / MA20" value={`${formatNumber(analysis.trend.ma_5)} / ${formatNumber(analysis.trend.ma_20)}`} />
+                <StatusTile label="60日位置" value={formatPct(analysis.trend.position_in_60d_range)} />
+              </SimpleGrid>
+            </Paper>
+          </SimpleGrid>
+
+          <Paper className="opportunity-board" withBorder>
+            <Group justify="space-between" align="flex-start" mb="md">
+              <div>
+                <Text fw={900}>{stockChartMode === 'intraday' ? '今日分时' : '近期日 K'}</Text>
+                <Text size="sm" c="dimmed">
+                  {stockChartMode === 'intraday'
+                    ? `交易时段自动展示当天分钟行情，当前 ${chartRows.length} 个点。`
+                    : `非交易时段展示最近 ${analysis.trend_points.length} 个交易日。`}
+                </Text>
+              </div>
+              <Badge color={stockChartMode === 'intraday' ? 'blue' : 'gray'} variant="light">
+                {stockChartMode === 'intraday' ? '分时' : '日K'}
+              </Badge>
+            </Group>
+            <IntradayChart
+              rows={chartRows}
+              mode={stockChartMode === 'intraday' ? 'line' : 'candle'}
+              timeMode={stockChartMode}
+              loading={chartLoading}
+              error={chartError}
+            />
+          </Paper>
+
+          <Alert color="gray" variant="light">
+            {analysis.disclaimer}
+          </Alert>
+        </>
+      ) : (
+        <Paper className="opportunity-board" withBorder>
+          <div className="empty-state refined">
+            <Search size={20} />
+            <span>输入股票名称或代码后开始分析。持仓字段可选，不填时只给观察/买入计划。</span>
+          </div>
+        </Paper>
+      )}
+    </Stack>
+  );
+}
+
 function BacktestPage() {
   const {
     screenDate,
@@ -597,7 +1059,7 @@ function BacktestPage() {
           <Group justify="space-between" align="flex-start" mb="md">
             <div>
               <Text fw={800}>次日回测验证</Text>
-              <Text size="xs" c="dimmed">验证计划价触发、浮盈、回撤和止损暴露。</Text>
+            <Text size="xs" c="dimmed">验证计划价触发、浮盈、回撤和止损暴露；缺少选股报告时会自动补生成。</Text>
             </div>
             <ThemeIcon variant="light" color="blue"><Target size={18} /></ThemeIcon>
           </Group>
@@ -624,7 +1086,7 @@ function BacktestPage() {
             />
           </SimpleGrid>
           <Group mt="md" justify="space-between">
-            <Text size="xs" c="dimmed">建议在次日收盘后执行，避免盘中价格未完整。</Text>
+            <Text size="xs" c="dimmed">建议在次日收盘后执行，自动生成时会沿用当前板块排除设置。</Text>
             <Button color="dark" variant="filled" leftSection={<Target size={16} />} onClick={handleBacktest} loading={backtestLoading} disabled={screenLoading}>
               运行回测
             </Button>
@@ -679,81 +1141,436 @@ function BacktestPage() {
 }
 
 function AlertsPage() {
-  const { candidates, screen, handleScreen, screenLoading } = useAppState();
-  const alerts = useMemo(() => buildAlerts(candidates), [candidates]);
+  const { screen, handleScreen, screenLoading } = useAppState();
+  const [alertScreenDate, setAlertScreenDate] = useState('');
+  const [alertDate, setAlertDate] = useState(todayInputValue());
+  const [monitorScope, setMonitorScope] = useState<'candidates' | 'targets'>('candidates');
+  const [screenDateTouched, setScreenDateTouched] = useState(false);
+
+  const reportsQuery = useQuery({
+    queryKey: ['screen-reports'],
+    queryFn: fetchScreenReports,
+    staleTime: 30_000
+  });
+
+  useEffect(() => {
+    if (screenDateTouched) {
+      return;
+    }
+    const preferred = reportsQuery.data?.latest
+      ? displayTradeDate(reportsQuery.data.latest)
+      : screen?.trade_date
+        ? displayTradeDate(screen.trade_date)
+        : '';
+    if (preferred && preferred !== alertScreenDate) {
+      setAlertScreenDate(preferred);
+    }
+  }, [alertScreenDate, reportsQuery.data?.latest, screen?.trade_date, screenDateTouched]);
+
+  const selectedScreenTradeDate = alertScreenDate ? toTradeDate(alertScreenDate) : '';
+  const selectedReportQuery = useQuery({
+    queryKey: ['screen-report', selectedScreenTradeDate],
+    queryFn: () => fetchScreenReport(selectedScreenTradeDate),
+    enabled: Boolean(selectedScreenTradeDate),
+    staleTime: 30_000,
+    retry: 1
+  });
+  const alertScreen = selectedReportQuery.data;
+  const alertCandidates = alertScreen?.candidates ?? [];
+  const plannedTargetCount = alertScreen?.target_count ?? alertScreen?.filtered_count ?? alertCandidates.length;
+
+  const alertQuery = useQuery({
+    queryKey: ['intraday-alerts', alertScreen?.trade_date, alertDate, monitorScope, alertCandidates.length, plannedTargetCount],
+    queryFn: () => fetchIntradayAlerts({
+      screen_date: alertScreen?.trade_date ?? '',
+      trade_date: toTradeDate(alertDate),
+      monitor_scope: monitorScope,
+      limit: monitorScope === 'candidates' ? Math.min(Math.max(alertCandidates.length, 1), 30) : undefined
+    }),
+    enabled: Boolean(alertScreen?.trade_date),
+    staleTime: 15_000,
+    refetchInterval: alertScreen?.trade_date ? 60_000 : false,
+    retry: 1
+  });
+  const alerts = alertQuery.data?.alerts ?? [];
+  const monitoredCount = alertQuery.data?.candidate_count ?? (monitorScope === 'targets' ? plannedTargetCount : alertCandidates.length);
+  const availableReportCount = reportsQuery.data?.dates.length ?? 0;
+  const selectedScreenDisplay = alertScreen?.trade_date
+    ? displayTradeDate(alertScreen.trade_date)
+    : alertScreenDate || '-';
+  const selectedAlertDisplay = displayTradeDate(toTradeDate(alertDate));
+  const scopeLabel = monitorScope === 'targets' ? '全部目标池' : '推荐观察池';
 
   return (
     <Stack gap="md">
-      <MarketRibbon />
+      <Paper className="market-ribbon alerts-ribbon" withBorder>
+        <RibbonCell label="选股日期" value={selectedScreenDisplay} detail="盘后报告口径" />
+        <RibbonCell label="观察日期" value={selectedAlertDisplay} detail="盘中行情口径" />
+        <RibbonCell label="监控范围" value={scopeLabel} detail={monitorScope === 'targets' ? '快照批量监控' : '分钟线精细监控'} tone="accent" />
+        <RibbonCell label="推荐池" value={`${alertCandidates.length} 只`} detail={`已有报告 ${availableReportCount} 个`} />
+        <RibbonCell label="目标池" value={`${plannedTargetCount} 只`} detail="设置过滤后的全量对象" />
+        <RibbonCell label="数据状态" value={alertQuery.isFetching ? '更新中' : alertScreen ? '正常' : '待选择'} detail={alertQuery.data ? `最近 ${displayUpdateTime(alertQuery.data.generated_at)}` : '等待异动刷新'} tone={alertScreen ? 'good' : undefined} />
+      </Paper>
+
       <Paper className="opportunity-board" withBorder>
         <Group justify="space-between" align="flex-start" mb="md">
           <div>
             <Text fw={900} size="lg">量价异动队列</Text>
             <Text size="sm" c="dimmed">
-              {screen ? `${displayTradeDate(screen.trade_date)} 观察池生成 ${alerts.length} 条异动。` : '先运行一次盘后扫描，系统会根据候选池生成异动。'}
+              {alertScreen
+                ? `选股日期 ${selectedScreenDisplay} · 观察日期 ${selectedAlertDisplay} · ${scopeLabel} · 每 60 秒自动刷新。`
+                : '选择一个已经落盘的盘后选股报告，系统会用对应观察池做盘中异动监控。'}
             </Text>
           </div>
-          <Button size="xs" variant="light" color="dark" leftSection={<RefreshCw size={14} />} onClick={handleScreen} loading={screenLoading}>
-            重新扫描
-          </Button>
+          <Group gap="xs" align="flex-end">
+            <DatePickerInput
+              label="选股日期"
+              value={alertScreenDate}
+              valueFormat="YYYY-MM-DD"
+              placeholder="选择选股日期"
+              locale="zh-cn"
+              dropdownType="popover"
+              leftSection={<CalendarDays size={14} />}
+              onChange={(value) => {
+                setScreenDateTouched(true);
+                setAlertScreenDate(value ?? '');
+              }}
+            />
+            <SegmentedControl
+              size="sm"
+              value={monitorScope}
+              onChange={(value) => setMonitorScope(value as 'candidates' | 'targets')}
+              data={[
+                { label: '推荐观察池', value: 'candidates' },
+                { label: '全部目标池', value: 'targets' }
+              ]}
+            />
+            <DatePickerInput
+              label="观察日期"
+              value={alertDate}
+              valueFormat="YYYY-MM-DD"
+              placeholder="选择观察日期"
+              locale="zh-cn"
+              dropdownType="popover"
+              leftSection={<CalendarDays size={14} />}
+              onChange={(value) => value && setAlertDate(value)}
+            />
+            <Button
+              size="sm"
+              variant="light"
+              color="dark"
+              leftSection={<RefreshCw size={14} />}
+              onClick={() => alertQuery.refetch()}
+              loading={alertQuery.isFetching}
+              disabled={!alertScreen}
+            >
+              刷新异动
+            </Button>
+          </Group>
         </Group>
-        {alerts.length ? (
+
+        <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="sm" mb="md">
+          <StatusTile label="监控对象" value={`${monitoredCount} 只`} />
+          <StatusTile label="盘中异动" value={`${alertQuery.data?.alert_count ?? 0} 条`} />
+          <StatusTile label="最近更新" value={alertQuery.data ? displayUpdateTime(alertQuery.data.generated_at) : '-'} />
+        </SimpleGrid>
+
+        {reportsQuery.error instanceof Error ? (
+          <Alert color="red" variant="light" icon={<ShieldAlert size={18} />} title="扫描报告列表获取失败" mb="md">
+            {reportsQuery.error.message}
+          </Alert>
+        ) : null}
+
+        {selectedReportQuery.error instanceof Error ? (
+          <Alert color="red" variant="light" icon={<ShieldAlert size={18} />} title="选股报告读取失败" mb="md">
+            {selectedReportQuery.error.message}
+          </Alert>
+        ) : null}
+
+        {alertQuery.error instanceof Error ? (
+          <Alert color="red" variant="light" icon={<ShieldAlert size={18} />} title="盘中异动获取失败" mb="md">
+            {alertQuery.error.message}
+          </Alert>
+        ) : null}
+
+        {!alertScreen ? (
+          <div className="empty-state refined">
+            <BellRing size={20} />
+            <span>{selectedReportQuery.isFetching || reportsQuery.isFetching ? '正在读取本地扫描报告...' : '先运行一次盘后扫描，或在上方选择已有选股日期。'}</span>
+          </div>
+        ) : alerts.length ? (
           <Stack gap="xs">
             {alerts.map((item) => (
               <div className="alert-row" key={item.id}>
-                <ThemeIcon color={item.tone} variant="light" radius="xl">{item.icon}</ThemeIcon>
+                <ThemeIcon color={alertTone(item.tone)} variant="light" radius="xl">
+                  {alertIcon(item.signal)}
+                </ThemeIcon>
                 <div>
                   <Text fw={900}>{item.title}</Text>
                   <Text size="sm" c="dimmed">{item.detail}</Text>
+                  <Text size="xs" c="dimmed" mt={4}>
+                    {item.code} · 最新 {formatNumber(item.latest_price)} · 较扫描价 {formatPct(item.pct_from_reference)}
+                    {item.triggered_at ? ` · ${item.triggered_at}` : ''}
+                  </Text>
                 </div>
-                <Badge color={item.tone} variant="light">{item.level}</Badge>
+                <Badge color={alertTone(item.tone)} variant="light">{item.level}</Badge>
               </div>
             ))}
           </Stack>
         ) : (
           <div className="empty-state refined">
             <BellRing size={20} />
-            <span>暂无异动。运行盘后扫描后，这里会展示高成交额、高换手、高量比和风险预算提醒。</span>
+            <span>{alertQuery.isFetching ? `正在拉取${scopeLabel}行情...` : `当前${scopeLabel}暂未触发低吸、深跌、突破或放量异动。`}</span>
           </div>
         )}
+      </Paper>
+
+      <Paper className="operation-card" withBorder>
+        <Group justify="space-between" align="flex-start">
+          <div>
+            <Text fw={900}>观察池维护</Text>
+            <Text size="sm" c="dimmed">
+              推荐观察池监控 Top 候选的分钟线；全部目标池监控盘后扫描时经过设置过滤后的完整目标对象，使用全市场快照提高盘中响应速度。
+            </Text>
+          </div>
+          <Button
+            size="sm"
+            variant="light"
+            color="dark"
+            leftSection={<Search size={14} />}
+            onClick={() => {
+              setScreenDateTouched(false);
+              handleScreen();
+              void reportsQuery.refetch();
+            }}
+            loading={screenLoading}
+          >
+            更新观察池
+          </Button>
+        </Group>
       </Paper>
     </Stack>
   );
 }
 
 function SectorsPage() {
-  const { candidates, screen, handleScreen, screenLoading } = useAppState();
-  const boardRows = useMemo(() => aggregateCandidates(candidates, (item) => item.交易板块 ?? '未识别'), [candidates]);
-  const industryRows = useMemo(() => aggregateCandidates(candidates, (item) => item.行业 || '未补行业'), [candidates]);
+  const { screen, runScreenWithOptions, screenLoading } = useAppState();
+  const [sectorDate, setSectorDate] = useState('');
+  const [sectorScope, setSectorScope] = useState<SectorScope>('targets');
+  const [sectorDateTouched, setSectorDateTouched] = useState(false);
+
+  const reportsQuery = useQuery({
+    queryKey: ['screen-reports'],
+    queryFn: fetchScreenReports,
+    staleTime: 30_000
+  });
+
+  useEffect(() => {
+    if (sectorDateTouched) {
+      return;
+    }
+    const preferred = reportsQuery.data?.latest
+      ? displayTradeDate(reportsQuery.data.latest)
+      : screen?.trade_date
+        ? displayTradeDate(screen.trade_date)
+        : '';
+    if (preferred && preferred !== sectorDate) {
+      setSectorDate(preferred);
+    }
+  }, [reportsQuery.data?.latest, screen?.trade_date, sectorDate, sectorDateTouched]);
+
+  const selectedSectorTradeDate = sectorDate ? toTradeDate(sectorDate) : '';
+  const sectorQuery = useQuery({
+    queryKey: ['sector-flow', selectedSectorTradeDate, sectorScope],
+    queryFn: () => fetchSectorFlow({ date: selectedSectorTradeDate, scope: sectorScope }),
+    enabled: Boolean(selectedSectorTradeDate),
+    staleTime: 30_000,
+    retry: 1
+  });
+  const sector = sectorQuery.data;
+  const sectorDateDisplay = sector ? displayTradeDate(sector.trade_date) : sectorDate || '-';
+  const scopeLabel = sectorScope === 'targets' ? '全部目标池' : '推荐观察池';
+  const validIndustryRows = sector?.industry_rows.filter((row) => row.name !== '未补行业') ?? [];
+  const industryRows = validIndustryRows.length ? validIndustryRows : sector?.industry_rows ?? [];
 
   return (
     <Stack gap="md">
-      <MarketRibbon />
-      <SimpleGrid cols={{ base: 1, lg: 2 }} spacing="md">
-        <Paper className="opportunity-board" withBorder>
-          <Group justify="space-between" align="flex-start" mb="md">
-            <div>
-              <Text fw={900}>交易板块分布</Text>
-              <Text size="sm" c="dimmed">{screen ? `${displayTradeDate(screen.trade_date)} 候选池板块归因。` : '先运行扫描生成候选池。'}</Text>
-            </div>
-            <ThemeIcon color="teal" variant="light"><Layers3 size={18} /></ThemeIcon>
-          </Group>
-          <AggregateTable rows={boardRows} emptyText="暂无板块数据。" />
-        </Paper>
+      <Paper className="market-ribbon sectors-ribbon" withBorder>
+        <RibbonCell label="归因日期" value={sectorDateDisplay} detail="盘后报告口径" />
+        <RibbonCell label="资金口径" value={scopeLabel} detail={sectorScope === 'targets' ? '设置过滤后的全量对象' : 'Top 候选对象'} tone="accent" />
+        <RibbonCell label="样本数量" value={`${sector?.source_count ?? 0} 只`} detail={`已有报告 ${reportsQuery.data?.dates.length ?? 0} 个`} />
+        <RibbonCell label="候选成交额" value={sector ? formatMoney(sector.total_amount) : '-'} detail="样本成交额汇总" />
+        <RibbonCell label="主导板块" value={sector?.leader ?? '-'} detail={`均分 ${sector ? formatNumber(sector.avg_score, 1) : '-'}`} tone={sector ? 'good' : undefined} />
+        <RibbonCell label="平均换手" value={sector ? formatPct(sector.avg_turnover) : '-'} detail={`量比 ${sector ? formatNumber(sector.avg_volume_ratio, 2) : '-'}`} />
+      </Paper>
 
-        <Paper className="opportunity-board" withBorder>
-          <Group justify="space-between" align="flex-start" mb="md">
-            <div>
-              <Text fw={900}>行业资金线索</Text>
-              <Text size="sm" c="dimmed">按候选成交额聚合，补行业信息后会更准确。</Text>
-            </div>
-            <Button size="xs" variant="light" color="dark" leftSection={<BarChart3 size={14} />} onClick={handleScreen} loading={screenLoading}>
-              更新数据
+      <Paper className="operation-card" withBorder>
+        <Group justify="space-between" align="flex-end" className="sector-controls">
+          <div>
+            <Text fw={900}>资金归因控制台</Text>
+            <Text size="sm" c="dimmed">
+              {sector
+                ? `${sectorDateDisplay} · ${scopeLabel} · 按成交额、评分、涨跌幅和换手率聚合。`
+                : '选择已经落盘的扫描报告后展示板块资金归因。'}
+            </Text>
+          </div>
+          <Group gap="xs" align="flex-end">
+            <DatePickerInput
+              label="归因日期"
+              value={sectorDate}
+              valueFormat="YYYY-MM-DD"
+              placeholder="选择归因日期"
+              locale="zh-cn"
+              dropdownType="popover"
+              leftSection={<CalendarDays size={14} />}
+              onChange={(value) => {
+                setSectorDateTouched(true);
+                setSectorDate(value ?? '');
+              }}
+            />
+            <SegmentedControl
+              size="sm"
+              value={sectorScope}
+              onChange={(value) => setSectorScope(value as SectorScope)}
+              data={[
+                { label: '全部目标池', value: 'targets' },
+                { label: '推荐观察池', value: 'candidates' }
+              ]}
+            />
+            <Button
+              size="sm"
+              variant="light"
+              color="dark"
+              leftSection={<RefreshCw size={14} />}
+              onClick={() => sectorQuery.refetch()}
+              loading={sectorQuery.isFetching}
+              disabled={!selectedSectorTradeDate}
+            >
+              刷新归因
             </Button>
           </Group>
-          <AggregateTable rows={industryRows.slice(0, 12)} emptyText="暂无行业数据。开启“补行业信息”后再扫描可获得更完整结果。" />
-        </Paper>
+        </Group>
+      </Paper>
+
+      {reportsQuery.error instanceof Error ? (
+        <Alert color="red" variant="light" icon={<ShieldAlert size={18} />} title="扫描报告列表获取失败">
+          {reportsQuery.error.message}
+        </Alert>
+      ) : null}
+
+      {sectorQuery.error instanceof Error ? (
+        <Alert color="red" variant="light" icon={<ShieldAlert size={18} />} title="板块资金获取失败">
+          {sectorQuery.error.message}
+        </Alert>
+      ) : null}
+
+      <SimpleGrid cols={{ base: 1, sm: 4 }} spacing="sm">
+        <StatusTile label="总成交额" value={sector ? formatMoney(sector.total_amount) : '-'} />
+        <StatusTile label="平均评分" value={sector ? formatNumber(sector.avg_score, 1) : '-'} />
+        <StatusTile label="平均涨跌幅" value={sector ? formatPct(sector.avg_pct_change) : '-'} />
+        <StatusTile label="板块数量" value={`${sector?.board_rows.length ?? 0} 个`} />
       </SimpleGrid>
+
+      {!sector ? (
+        <div className="empty-state refined">
+          <Layers3 size={20} />
+          <span>{sectorQuery.isFetching || reportsQuery.isFetching ? '正在读取本地扫描报告...' : '先运行一次盘后扫描，或在上方选择已有归因日期。'}</span>
+        </div>
+      ) : (
+        <section className="sector-grid">
+          <div className="sector-main">
+            <Paper className="opportunity-board" withBorder>
+              <Group justify="space-between" align="flex-start" mb="md">
+                <div>
+                  <Text fw={900}>交易板块资金</Text>
+                  <Text size="sm" c="dimmed">按主板、创业板、科创板、北交所聚合当前口径样本。</Text>
+                </div>
+                <ThemeIcon color="teal" variant="light"><Layers3 size={18} /></ThemeIcon>
+              </Group>
+              <SectorAggregateTable rows={sector.board_rows} emptyText="暂无交易板块数据。" />
+            </Paper>
+
+            <SimpleGrid cols={{ base: 1, lg: 2 }} spacing="md" mt="md">
+              <Paper className="opportunity-board" withBorder>
+                <Group justify="space-between" align="flex-start" mb="md">
+                  <div>
+                    <Text fw={900}>机会标签热度</Text>
+                    <Text size="sm" c="dimmed">用标签拆解资金偏好，比如高成交额、放量、换手、趋势。</Text>
+                  </div>
+                  <ThemeIcon color="blue" variant="light"><BarChart3 size={18} /></ThemeIcon>
+                </Group>
+                <SectorAggregateTable rows={sector.tag_rows.slice(0, 10)} emptyText="暂无机会标签数据。" />
+              </Paper>
+
+              <Paper className="opportunity-board" withBorder>
+                <Group justify="space-between" align="flex-start" mb="md">
+                  <div>
+                    <Text fw={900}>行业资金线索</Text>
+                    <Text size="sm" c="dimmed">
+                      {validIndustryRows.length ? '按已补行业聚合。' : '当前目标池尚未补行业，先展示缺失状态。'}
+                    </Text>
+                  </div>
+                  <Button
+                    size="xs"
+                    variant="light"
+                    color="dark"
+                    leftSection={<Search size={14} />}
+                    onClick={() => {
+                      setSectorDateTouched(false);
+                      runScreenWithOptions({ date: selectedSectorTradeDate, enrich: true });
+                      void reportsQuery.refetch();
+                    }}
+                    loading={screenLoading}
+                  >
+                    补行业扫描
+                  </Button>
+                </Group>
+                <SectorAggregateTable rows={industryRows.slice(0, 10)} emptyText="暂无行业数据。开启补行业信息后重新扫描可获得更完整结果。" />
+              </Paper>
+            </SimpleGrid>
+          </div>
+
+          <Paper className="decision-stack sector-side" withBorder>
+            <Group justify="space-between" align="center" mb="xs">
+              <div>
+                <Text fw={900}>资金中枢</Text>
+                <Text size="xs" c="dimmed">按成交额排序的样本龙头。</Text>
+              </div>
+              <ThemeIcon color="dark" variant="light"><Gauge size={18} /></ThemeIcon>
+            </Group>
+            <Stack gap="sm">
+              <MetricBar label="板块集中度" value={sector.board_rows[0]?.amount_share ?? 0} suffix={sector.board_rows[0] ? `${sector.board_rows[0].name} ${formatPct(sector.board_rows[0].amount_share)}` : '-'} color="teal" />
+              <MetricBar label="平均涨跌幅" value={Math.max(0, Math.min(100, 50 + sector.avg_pct_change * 5))} suffix={formatPct(sector.avg_pct_change)} color="orange" />
+              <MetricBar label="平均评分" value={sector.avg_score} suffix={`${formatNumber(sector.avg_score, 1)}/100`} color="blue" />
+              <Divider />
+              <SectorStockList rows={sector.top_candidates} />
+            </Stack>
+          </Paper>
+        </section>
+      )}
+
+      <Paper className="operation-card" withBorder>
+        <Group justify="space-between" align="flex-start">
+          <div>
+            <Text fw={900}>报告维护</Text>
+            <Text size="sm" c="dimmed">板块资金读取本地扫描报告；更新扫描后会重新生成推荐池和目标池归因。</Text>
+          </div>
+          <Button
+            size="sm"
+            variant="light"
+            color="dark"
+            leftSection={<Search size={14} />}
+            onClick={() => {
+              setSectorDateTouched(false);
+              runScreenWithOptions({ date: selectedSectorTradeDate });
+              void reportsQuery.refetch();
+            }}
+            loading={screenLoading}
+          >
+            更新扫描
+          </Button>
+        </Group>
+      </Paper>
     </Stack>
   );
 }
@@ -761,8 +1578,53 @@ function SectorsPage() {
 function SettingsPage() {
   const { screenPreferences, setScreenPreferences, config, configLoading } = useAppState();
   const navigate = useNavigate();
+  const notificationQuery = useQuery({
+    queryKey: ['notification-settings'],
+    queryFn: fetchNotificationSettings
+  });
+  const [notificationEmail, setNotificationEmail] = useState('');
+  const saveNotificationMutation = useMutation({
+    mutationFn: saveNotificationSettings,
+    onSuccess: (result) => {
+      setNotificationEmail(result.user_email ?? '');
+      void notificationQuery.refetch();
+      notifications.show({
+        color: 'teal',
+        title: '通知账号已保存',
+        message: result.user_email ? `后续任务会通知 ${result.user_email}。` : '已清空通知邮箱。'
+      });
+    },
+    onError: (error) => {
+      notifications.show({
+        color: 'red',
+        title: '通知账号保存失败',
+        message: error instanceof Error ? error.message : '请检查邮箱格式'
+      });
+    }
+  });
+  const testNotificationMutation = useMutation({
+    mutationFn: sendTestNotification,
+    onSuccess: (result) => {
+      notifications.show({
+        color: result.ok ? 'teal' : 'orange',
+        title: result.ok ? '测试通知已发送' : '测试通知未发送',
+        message: result.message
+      });
+    },
+    onError: (error) => {
+      notifications.show({
+        color: 'red',
+        title: '测试通知失败',
+        message: error instanceof Error ? error.message : '通知接口返回异常'
+      });
+    }
+  });
   const activeLabels = boardOptions.filter((item) => screenPreferences.excludedBoards.includes(item.value)).map((item) => item.label);
   const requestPreview = screenPreferences.boardExclusionEnabled ? screenPreferences.excludedBoards : [];
+
+  useEffect(() => {
+    setNotificationEmail(notificationQuery.data?.user_email ?? '');
+  }, [notificationQuery.data?.user_email]);
 
   function update(patch: Partial<ScreenPreferences>) {
     setScreenPreferences({
@@ -851,6 +1713,49 @@ function SettingsPage() {
       <Paper className="settings-card" withBorder>
         <Group justify="space-between" align="flex-start" mb="md">
           <div>
+            <Text fw={900}>飞书机器人通知</Text>
+            <Text size="sm" c="dimmed">缺少历史快照的扫描会转入后台；任务完成后用这里保存的邮箱发送通知。</Text>
+          </div>
+          <Badge color={notificationQuery.data?.user_email ? 'teal' : 'gray'} variant="light">
+            {notificationQuery.data?.user_email ? '已注册' : '未配置'}
+          </Badge>
+        </Group>
+        <SimpleGrid cols={{ base: 1, md: 2 }} spacing="sm">
+          <TextInput
+            label="飞书账号邮箱"
+            placeholder="name@example.com"
+            value={notificationEmail}
+            leftSection={<Mail size={15} />}
+            disabled={notificationQuery.isLoading}
+            onChange={(event) => setNotificationEmail(event.currentTarget.value)}
+          />
+          <div className="notification-actions">
+            <Button
+              color="dark"
+              variant="filled"
+              leftSection={<Settings2 size={16} />}
+              loading={saveNotificationMutation.isPending}
+              onClick={() => saveNotificationMutation.mutate({ user_email: notificationEmail.trim() || null })}
+            >
+              保存通知账号
+            </Button>
+            <Button
+              variant="light"
+              color="teal"
+              leftSection={<Send size={16} />}
+              loading={testNotificationMutation.isPending}
+              disabled={!notificationQuery.data?.user_email}
+              onClick={() => testNotificationMutation.mutate()}
+            >
+              发送测试
+            </Button>
+          </div>
+        </SimpleGrid>
+      </Paper>
+
+      <Paper className="settings-card" withBorder>
+        <Group justify="space-between" align="flex-start" mb="md">
+          <div>
             <Text fw={900}>策略参数快照</Text>
             <Text size="sm" c="dimmed">这里展示后端当前数值过滤和仓位参数，板块过滤由上方账户权限过滤控制。</Text>
           </div>
@@ -908,6 +1813,18 @@ function TaskErrorAlert({ error }: { error: string }) {
   return (
     <Alert color="red" variant="light" icon={<ShieldAlert size={18} />} title="数据任务失败" mb="md">
       {message}
+    </Alert>
+  );
+}
+
+function TaskStatusAlert({ task }: { task?: TaskStatusResponse }) {
+  if (!task || task.status === 'completed' || task.status === 'failed') {
+    return null;
+  }
+  return (
+    <Alert color="blue" variant="light" icon={<DatabaseZap size={18} />} title="历史数据后台重建中" mb="md">
+      {displayTradeDate(task.trade_date)} 的全市场快照正在后台生成。页面已恢复可操作，
+      {task.notification_email ? `完成后会通知 ${task.notification_email}。` : '保存飞书邮箱后，后续任务会自动通知。'}
     </Alert>
   );
 }
@@ -1058,7 +1975,7 @@ function MetricBar({ label, value, suffix, color }: { label: string; value: numb
   );
 }
 
-function AggregateTable({ rows, emptyText }: { rows: AggregateRow[]; emptyText: string }) {
+function SectorAggregateTable({ rows, emptyText }: { rows: SectorAggregateRow[]; emptyText: string }) {
   if (!rows.length) {
     return (
       <div className="empty-state refined">
@@ -1069,23 +1986,35 @@ function AggregateTable({ rows, emptyText }: { rows: AggregateRow[]; emptyText: 
   }
 
   return (
-    <Table.ScrollContainer minWidth={460}>
+    <Table.ScrollContainer minWidth={620}>
       <Table className="aggregate-table" verticalSpacing={8}>
         <Table.Thead>
           <Table.Tr>
             <Table.Th>名称</Table.Th>
-            <Table.Th>候选</Table.Th>
+            <Table.Th>样本</Table.Th>
             <Table.Th>成交额</Table.Th>
+            <Table.Th>占比</Table.Th>
             <Table.Th>均分</Table.Th>
+            <Table.Th>涨跌幅</Table.Th>
+            <Table.Th>换手</Table.Th>
+            <Table.Th>代表个股</Table.Th>
           </Table.Tr>
         </Table.Thead>
         <Table.Tbody>
           {rows.map((row) => (
             <Table.Tr key={row.name}>
-              <Table.Td>{row.name}</Table.Td>
+              <Table.Td><Text fw={900} size="sm">{row.name}</Text></Table.Td>
               <Table.Td>{row.count}</Table.Td>
               <Table.Td>{formatMoney(row.amount)}</Table.Td>
-              <Table.Td>{formatNumber(row.avgScore, 1)}</Table.Td>
+              <Table.Td>{formatPct(row.amount_share)}</Table.Td>
+              <Table.Td>{formatNumber(row.avg_score, 1)}</Table.Td>
+              <Table.Td className={classForSigned(row.avg_pct_change)}>{formatPct(row.avg_pct_change)}</Table.Td>
+              <Table.Td>{formatPct(row.avg_turnover)}</Table.Td>
+              <Table.Td>
+                <div className="sector-top-names">
+                  {row.top_names.slice(0, 3).map((name) => <span key={name}>{name}</span>)}
+                </div>
+              </Table.Td>
             </Table.Tr>
           ))}
         </Table.Tbody>
@@ -1094,87 +2023,79 @@ function AggregateTable({ rows, emptyText }: { rows: AggregateRow[]; emptyText: 
   );
 }
 
-type AggregateRow = {
-  name: string;
-  count: number;
-  amount: number;
-  avgScore: number;
-};
-
-function aggregateCandidates(candidates: Candidate[], keyFn: (candidate: Candidate) => string): AggregateRow[] {
-  const map = new Map<string, { count: number; amount: number; score: number }>();
-  for (const item of candidates) {
-    const key = keyFn(item);
-    const current = map.get(key) ?? { count: 0, amount: 0, score: 0 };
-    current.count += 1;
-    current.amount += Number(item.成交额 ?? 0);
-    current.score += Number(item.score ?? 0);
-    map.set(key, current);
+function SectorStockList({ rows }: { rows: SectorStockRow[] }) {
+  if (!rows.length) {
+    return (
+      <div className="empty-state refined">
+        <BarChart3 size={18} />
+        <span>暂无高成交样本。</span>
+      </div>
+    );
   }
-  return Array.from(map.entries())
-    .map(([name, value]) => ({
-      name,
-      count: value.count,
-      amount: value.amount,
-      avgScore: value.count ? value.score / value.count : 0
-    }))
-    .sort((left, right) => right.amount - left.amount);
+
+  return (
+    <Stack gap="xs">
+      {rows.map((row, index) => (
+        <div className="sector-stock-row" key={`${row.code}-${index}`}>
+          <div>
+            <Group gap={6} mb={2}>
+              <Text fw={900} size="sm">{row.name}</Text>
+              <Badge color="gray" variant="light">{row.board}</Badge>
+            </Group>
+            <Text size="xs" c="dimmed">{row.code} · {row.tag || row.industry || '未补行业'}</Text>
+          </div>
+          <div>
+            <strong>{formatMoney(row.amount)}</strong>
+            <span className={classForSigned(row.pct_change)}>{formatPct(row.pct_change)}</span>
+          </div>
+        </div>
+      ))}
+    </Stack>
+  );
 }
 
-type AlertItem = {
-  id: string;
-  title: string;
-  detail: string;
-  level: string;
-  tone: 'red' | 'orange' | 'blue' | 'teal';
-  icon: React.ReactNode;
-};
-
-function buildAlerts(candidates: Candidate[]): AlertItem[] {
-  const alerts: AlertItem[] = [];
-  for (const item of candidates.slice(0, 30)) {
-    if (Number(item.成交额) >= 2_000_000_000) {
-      alerts.push({
-        id: `${item.代码}-amount`,
-        title: `${item.名称} 成交额放大`,
-        detail: `${item.代码} 成交额 ${formatMoney(item.成交额)}，评分 ${formatNumber(item.score, 1)}。`,
-        level: '成交额',
-        tone: 'blue',
-        icon: <BarChart3 size={15} />
-      });
-    }
-    if (Number(item.换手率) >= 12) {
-      alerts.push({
-        id: `${item.代码}-turnover`,
-        title: `${item.名称} 换手偏高`,
-        detail: `换手 ${formatPct(item.换手率)}，留意次日承接和高开放弃价 ${formatNumber(item.高开放弃价)}。`,
-        level: '换手',
-        tone: 'orange',
-        icon: <Activity size={15} />
-      });
-    }
-    if (Number(item.量比) >= 2.3) {
-      alerts.push({
-        id: `${item.代码}-volume-ratio`,
-        title: `${item.名称} 量比异动`,
-        detail: `量比 ${formatNumber(item.量比, 2)}，低吸区间 ${formatNumber(item.计划低吸价)}-${formatNumber(item.计划买入上限)}。`,
-        level: '量比',
-        tone: 'teal',
-        icon: <TrendingUp size={15} />
-      });
-    }
-    if (Number(item.涨跌幅) >= 8) {
-      alerts.push({
-        id: `${item.代码}-risk`,
-        title: `${item.名称} 追高风险`,
-        detail: `涨幅 ${formatPct(item.涨跌幅)}，高开超过 ${formatNumber(item.高开放弃价)} 默认放弃。`,
-        level: '风险',
-        tone: 'red',
-        icon: <ShieldAlert size={15} />
-      });
-    }
+function alertTone(tone: string): 'red' | 'orange' | 'blue' | 'teal' | 'gray' {
+  if (tone === 'red' || tone === 'orange' || tone === 'blue' || tone === 'teal' || tone === 'gray') {
+    return tone;
   }
-  return alerts.slice(0, 18);
+  return 'gray';
+}
+
+function alertIcon(signal: IntradayAlert['signal']) {
+  if (signal === 'entry_zone') {
+    return <Target size={15} />;
+  }
+  if (signal === 'deep_pullback' || signal === 'large_drop') {
+    return <Activity size={15} />;
+  }
+  if (signal === 'breakout') {
+    return <TrendingUp size={15} />;
+  }
+  if (signal === 'volume_spike') {
+    return <BarChart3 size={15} />;
+  }
+  if (signal === 'stop_risk' || signal === 'avoid_gap') {
+    return <ShieldAlert size={15} />;
+  }
+  return <BellRing size={15} />;
+}
+
+function displayUpdateTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value.slice(11, 19) || value;
+  }
+  return date.toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+function resolveStockChartMode(tradeDate: string, now = new Date()): 'intraday' | 'daily' {
+  const compactTradeDate = tradeDate.replaceAll('-', '');
+  const today = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
+  if (compactTradeDate !== today) {
+    return 'daily';
+  }
+  const minutes = now.getHours() * 60 + now.getMinutes();
+  return minutes >= 9 * 60 + 30 && minutes <= 15 * 60 ? 'intraday' : 'daily';
 }
 
 function EvidenceDrawer({ candidate, onClose }: { candidate: Candidate | null; onClose: () => void }) {
@@ -1377,6 +2298,12 @@ const opportunityRoute = createRoute({
   component: OpportunityPage
 });
 
+const stockRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/stock',
+  component: StockAnalysisPage
+});
+
 const backtestRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/backtest',
@@ -1401,7 +2328,7 @@ const settingsRoute = createRoute({
   component: SettingsPage
 });
 
-const routeTree = rootRoute.addChildren([opportunityRoute, backtestRoute, alertsRoute, sectorsRoute, settingsRoute]);
+const routeTree = rootRoute.addChildren([opportunityRoute, stockRoute, backtestRoute, alertsRoute, sectorsRoute, settingsRoute]);
 
 export const router = createRouter({ routeTree });
 

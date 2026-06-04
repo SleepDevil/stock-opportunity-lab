@@ -8,7 +8,7 @@ import pandas as pd
 
 from app.config import AppConfig
 from app.services.data_provider import MarketDataProvider
-from app.services.screener import load_screen_report, markdown_table
+from app.services.screener import load_screen_report, markdown_table, run_screen
 from app.services.strategy import simulate_next_day_entry
 from app.utils import json_records, normalize_trade_date
 
@@ -28,11 +28,23 @@ def run_backtest(
     screen_date: str,
     actual_date: str,
     refresh: bool,
+    exclude_boards: list[str] | None = None,
 ) -> BacktestRun:
     screen = normalize_trade_date(screen_date)
     actual = normalize_trade_date(actual_date)
     config.ensure_dirs()
-    candidates = load_screen_report(config, screen)
+    try:
+        candidates = load_screen_report(config, screen)
+    except FileNotFoundError:
+        candidates = run_screen(
+            provider=provider,
+            config=config,
+            trade_date=screen,
+            refresh=refresh,
+            limit=config.screen.max_candidates,
+            enrich=False,
+            exclude_boards=exclude_boards,
+        ).candidates
     rows: list[dict[str, Any]] = []
     for _, candidate in candidates.iterrows():
         code = str(candidate["代码"]).zfill(6)
@@ -210,4 +222,3 @@ def render_backtest_markdown(
         ]
         lines.extend(markdown_table(rows[[col for col in cols if col in rows.columns]]))
     return "\n".join(lines) + "\n"
-

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+import ast
 import json
 import math
 from pathlib import Path
@@ -82,6 +83,7 @@ class ScreenRun:
     trade_date: str
     raw_count: int
     filtered_count: int
+    target_count: int
     board_excluded_count: int
     excluded_boards: list[str]
     candidates: pd.DataFrame
@@ -104,6 +106,7 @@ def run_screen(
     normalized = normalize_spot(raw)
     filtered, board_excluded_count = apply_filters(normalized, config, excluded_board_codes)
     ranked = score_candidates(filtered, config)
+    target_pool = prepare_monitor_pool(ranked, config)
     size = limit or config.screen.max_candidates
     candidates = ranked.head(size).copy()
     candidates.insert(0, "排名", range(1, len(candidates) + 1))
@@ -118,11 +121,12 @@ def run_screen(
         if column not in candidates.columns:
             candidates[column] = None
     candidates = candidates[OUTPUT_COLUMNS]
-    report_paths = persist_screen(config, normalized_date, candidates)
+    report_paths = persist_screen(config, normalized_date, candidates, target_pool)
     return ScreenRun(
         trade_date=normalized_date,
         raw_count=len(raw),
         filtered_count=len(filtered),
+        target_count=len(target_pool),
         board_excluded_count=board_excluded_count,
         excluded_boards=excluded_board_codes,
         candidates=candidates,
@@ -290,25 +294,52 @@ def attach_trend_points(
 def history_to_trend_points(history: pd.DataFrame, days: int = 20) -> list[dict[str, Any]]:
     if history.empty or "日期" not in history.columns:
         return []
-    columns = ["日期", "开盘", "收盘", "最高", "最低"]
+    columns = ["日期", "开盘", "收盘", "最高", "最低", "成交量", "成交额"]
     available = [column for column in columns if column in history.columns]
     clean = history[available].copy()
     clean["日期"] = clean["日期"].astype(str)
-    for column in ["开盘", "收盘", "最高", "最低"]:
+    for column in ["开盘", "收盘", "最高", "最低", "成交量", "成交额"]:
         if column in clean.columns:
             clean[column] = pd.to_numeric(clean[column], errors="coerce")
     clean = clean.dropna(subset=["收盘"]).sort_values("日期").tail(days)
     return json_records(clean)
 
 
-def persist_screen(config: AppConfig, trade_date: str, candidates: pd.DataFrame) -> dict[str, str]:
+def prepare_monitor_pool(ranked: pd.DataFrame, config: AppConfig) -> pd.DataFrame:
+    targets = ranked.copy()
+    targets.insert(0, "排名", range(1, len(targets) + 1))
+    targets = attach_buy_plan(targets, config.strategy)
+    if "行业" not in targets.columns:
+        targets["行业"] = ""
+    if "上市时间" not in targets.columns:
+        targets["上市时间"] = ""
+    targets["走势点位"] = ""
+    for column in OUTPUT_COLUMNS:
+        if column not in targets.columns:
+            targets[column] = None
+    return targets[OUTPUT_COLUMNS]
+
+
+def persist_screen(config: AppConfig, trade_date: str, candidates: pd.DataFrame, target_pool: pd.DataFrame) -> dict[str, str]:
     csv_path = config.reports_dir / f"screen_{trade_date}.csv"
     json_path = config.reports_dir / f"screen_{trade_date}.json"
     md_path = config.reports_dir / f"screen_{trade_date}.md"
-    candidates.to_csv(csv_path, index=False, encoding="utf-8-sig")
+    targets_csv_path = config.reports_dir / f"screen_targets_{trade_date}.csv"
+    targets_json_path = config.reports_dir / f"screen_targets_{trade_date}.json"
+    csv_candidates = serialize_report_frame(candidates)
+    csv_targets = serialize_report_frame(target_pool)
+    csv_candidates.to_csv(csv_path, index=False, encoding="utf-8-sig")
     json_path.write_text(json.dumps(json_records(candidates), ensure_ascii=False, indent=2), encoding="utf-8")
     md_path.write_text(render_screen_markdown(trade_date, candidates), encoding="utf-8")
-    return {"csv": str(csv_path), "json": str(json_path), "markdown": str(md_path)}
+    csv_targets.to_csv(targets_csv_path, index=False, encoding="utf-8-sig")
+    targets_json_path.write_text(json.dumps(json_records(target_pool), ensure_ascii=False, indent=2), encoding="utf-8")
+    return {
+        "csv": str(csv_path),
+        "json": str(json_path),
+        "markdown": str(md_path),
+        "targets_csv": str(targets_csv_path),
+        "targets_json": str(targets_json_path),
+    }
 
 
 def load_screen_report(config: AppConfig, trade_date: str) -> pd.DataFrame:
@@ -316,7 +347,65 @@ def load_screen_report(config: AppConfig, trade_date: str) -> pd.DataFrame:
     path = config.reports_dir / f"screen_{normalized}.csv"
     if not path.exists():
         raise FileNotFoundError(f"Missing screen report for {normalized}. Run a scan for that date first.")
-    return pd.read_csv(path, dtype={"代码": str})
+    return parse_report_frame(pd.read_csv(path, dtype={"代码": str}))
+
+
+def load_screen_targets(config: AppConfig, trade_date: str) -> pd.DataFrame:
+    normalized = normalize_trade_date(trade_date)
+    path = config.reports_dir / f"screen_targets_{normalized}.csv"
+    if path.exists():
+        return parse_report_frame(pd.read_csv(path, dtype={"代码": str}))
+    return load_screen_report(config, normalized)
+
+
+def serialize_report_frame(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    if "走势点位" in out.columns:
+        out["走势点位"] = out["走势点位"].map(serialize_trend_points)
+    return out
+
+
+def parse_report_frame(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    if "走势点位" in out.columns:
+        out["走势点位"] = out["走势点位"].map(parse_trend_points)
+    return out
+
+
+def serialize_trend_points(value: Any) -> str:
+    if isinstance(value, list):
+        return json.dumps(value, ensure_ascii=False)
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    return str(value)
+
+
+def parse_trend_points(value: Any) -> list[dict[str, Any]]:
+    if isinstance(value, list):
+        return value
+    if value is None:
+        return []
+    try:
+        if pd.isna(value):
+            return []
+    except (TypeError, ValueError):
+        pass
+    text = str(value).strip()
+    if not text:
+        return []
+    for loader in (json.loads, ast.literal_eval):
+        try:
+            parsed = loader(text)
+        except (json.JSONDecodeError, SyntaxError, ValueError):
+            continue
+        if isinstance(parsed, list):
+            return [item for item in parsed if isinstance(item, dict)]
+    return []
 
 
 def latest_screen_date(config: AppConfig, before: str | None = None) -> str | None:

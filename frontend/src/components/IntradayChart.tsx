@@ -14,11 +14,13 @@ import type { IntradayPoint } from '../types/api';
 export function IntradayChart({
   rows,
   mode,
+  timeMode = 'intraday',
   loading,
   error
 }: {
   rows: IntradayPoint[];
   mode: 'line' | 'candle';
+  timeMode?: 'intraday' | 'daily';
   loading?: boolean;
   error?: string;
 }) {
@@ -51,13 +53,13 @@ export function IntradayChart({
       },
       localization: {
         locale: 'zh-CN',
-        timeFormatter: (time: Time) => formatChartDateTime(time)
+        timeFormatter: (time: Time) => formatChartDateTime(time, timeMode, true)
       },
       timeScale: {
         borderColor: '#dbe3ed',
-        timeVisible: true,
+        timeVisible: timeMode === 'intraday',
         secondsVisible: false,
-        tickMarkFormatter: (time: Time) => formatChartTick(time)
+        tickMarkFormatter: (time: Time) => formatChartTick(time, timeMode)
       },
       crosshair: {
         mode: 0
@@ -81,10 +83,10 @@ export function IntradayChart({
       observer.disconnect();
       chart.remove();
     };
-  }, [rows, mode, loading, error]);
+  }, [rows, mode, timeMode, loading, error]);
 
   if (loading) {
-    return <div className="intraday-chart-state">分钟行情加载中...</div>;
+    return <div className="intraday-chart-state">{timeMode === 'intraday' ? '分钟行情加载中...' : '日 K 加载中...'}</div>;
   }
 
   if (error) {
@@ -92,7 +94,7 @@ export function IntradayChart({
   }
 
   if (!rows.length) {
-    return <div className="intraday-chart-state">暂无分钟行情数据。</div>;
+    return <div className="intraday-chart-state">{timeMode === 'intraday' ? '暂无分钟行情数据。' : '暂无日 K 数据。'}</div>;
   }
 
   return <div className="intraday-chart" ref={containerRef} />;
@@ -236,23 +238,29 @@ function normalizeChartRows(rows: IntradayPoint[]): ChartRow[] {
   return [...byTime.values()].sort((left, right) => left.chartTime - right.chartTime);
 }
 
-function formatChartTick(time: Time): string {
-  return formatChartDateTime(time, false);
+function formatChartTick(time: Time, timeMode: 'intraday' | 'daily'): string {
+  return formatChartDateTime(time, timeMode, false);
 }
 
-function formatChartDateTime(time: Time, withDate = true): string {
+function formatChartDateTime(time: Time, timeMode: 'intraday' | 'daily', withDate = true): string {
   if (typeof time !== 'number') {
     if (typeof time === 'string') {
       return time;
     }
-    return `${time.year}-${pad(time.month)}-${pad(time.day)}`;
+    return timeMode === 'daily'
+      ? `${pad(time.month)}-${pad(time.day)}`
+      : `${time.year}-${pad(time.month)}-${pad(time.day)}`;
   }
   const date = new Date(time * 1000);
   const clock = `${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}`;
+  const monthDay = `${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}`;
+  if (timeMode === 'daily') {
+    return monthDay;
+  }
   if (!withDate) {
     return clock;
   }
-  return `${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())} ${clock}`;
+  return `${monthDay} ${clock}`;
 }
 
 function pad(value: number): string {
