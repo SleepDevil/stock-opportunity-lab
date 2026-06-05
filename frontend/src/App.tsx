@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import {
   Alert,
   Badge,
@@ -10,6 +10,7 @@ import {
   Group,
   NumberInput,
   Paper,
+  Popover,
   Progress,
   ScrollArea,
   SegmentedControl,
@@ -2122,11 +2123,11 @@ function SectorsPage() {
               <Group justify="space-between" align="flex-start" mb="md">
                 <div>
                   <Text fw={900}>交易板块资金</Text>
-                  <Text size="sm" c="dimmed">按主板、创业板、科创板、北交所聚合当前口径样本。</Text>
+                  <Text size="sm" c="dimmed">按成交额占比、平均评分和涨跌幅展示资金集中方向。</Text>
                 </div>
                 <ThemeIcon color="teal" variant="light"><Layers3 size={18} /></ThemeIcon>
               </Group>
-              <SectorAggregateTable rows={sector.board_rows} emptyText="暂无交易板块数据。" />
+              <SectorAggregateChart rows={sector.board_rows} emptyText="暂无交易板块数据。" tradeDate={sector.trade_date} />
             </Paper>
 
             <SimpleGrid cols={{ base: 1, lg: 2 }} spacing="md" mt="md">
@@ -2134,11 +2135,11 @@ function SectorsPage() {
                 <Group justify="space-between" align="flex-start" mb="md">
                   <div>
                     <Text fw={900}>机会标签热度</Text>
-                    <Text size="sm" c="dimmed">用标签拆解资金偏好，比如高成交额、放量、换手、趋势。</Text>
+                    <Text size="sm" c="dimmed">用热度条拆解资金偏好，比如高成交额、放量、换手、趋势。</Text>
                   </div>
                   <ThemeIcon color="blue" variant="light"><BarChart3 size={18} /></ThemeIcon>
                 </Group>
-                <SectorAggregateTable rows={sector.tag_rows.slice(0, 10)} emptyText="暂无机会标签数据。" />
+                <SectorAggregateChart rows={sector.tag_rows.slice(0, 10)} emptyText="暂无机会标签数据。" tradeDate={sector.trade_date} compact />
               </Paper>
 
               <Paper className="opportunity-board" withBorder>
@@ -2164,7 +2165,7 @@ function SectorsPage() {
                     补行业扫描
                   </Button>
                 </Group>
-                <SectorAggregateTable rows={industryRows.slice(0, 10)} emptyText="暂无行业数据。开启补行业信息后重新扫描可获得更完整结果。" />
+                <SectorAggregateChart rows={industryRows.slice(0, 10)} emptyText="暂无行业数据。开启补行业信息后重新扫描可获得更完整结果。" tradeDate={sector.trade_date} compact />
               </Paper>
             </SimpleGrid>
           </div>
@@ -2182,7 +2183,7 @@ function SectorsPage() {
               <MetricBar label="平均涨跌幅" value={Math.max(0, Math.min(100, 50 + sector.avg_pct_change * 5))} suffix={formatPct(sector.avg_pct_change)} color="orange" />
               <MetricBar label="平均评分" value={sector.avg_score} suffix={`${formatNumber(sector.avg_score, 1)}/100`} color="blue" />
               <Divider />
-              <SectorStockList rows={sector.top_candidates} />
+              <SectorStockList rows={sector.top_candidates} tradeDate={sector.trade_date} />
             </Stack>
           </Paper>
         </section>
@@ -2614,7 +2615,17 @@ function MetricBar({ label, value, suffix, color }: { label: string; value: numb
   );
 }
 
-function SectorAggregateTable({ rows, emptyText }: { rows: SectorAggregateRow[]; emptyText: string }) {
+function SectorAggregateChart({
+  rows,
+  emptyText,
+  tradeDate,
+  compact = false
+}: {
+  rows: SectorAggregateRow[];
+  emptyText: string;
+  tradeDate: string;
+  compact?: boolean;
+}) {
   if (!rows.length) {
     return (
       <div className="empty-state refined">
@@ -2624,45 +2635,53 @@ function SectorAggregateTable({ rows, emptyText }: { rows: SectorAggregateRow[];
     );
   }
 
+  const maxAmount = Math.max(...rows.map((row) => row.amount), 1);
+
   return (
-    <Table.ScrollContainer minWidth={620}>
-      <Table className="aggregate-table" verticalSpacing={8}>
-        <Table.Thead>
-          <Table.Tr>
-            <Table.Th>名称</Table.Th>
-            <Table.Th>样本</Table.Th>
-            <Table.Th>成交额</Table.Th>
-            <Table.Th>占比</Table.Th>
-            <Table.Th>均分</Table.Th>
-            <Table.Th>涨跌幅</Table.Th>
-            <Table.Th>换手</Table.Th>
-            <Table.Th>代表个股</Table.Th>
-          </Table.Tr>
-        </Table.Thead>
-        <Table.Tbody>
-          {rows.map((row) => (
-            <Table.Tr key={row.name}>
-              <Table.Td><Text fw={900} size="sm">{row.name}</Text></Table.Td>
-              <Table.Td>{row.count}</Table.Td>
-              <Table.Td>{formatMoney(row.amount)}</Table.Td>
-              <Table.Td>{formatPct(row.amount_share)}</Table.Td>
-              <Table.Td>{formatNumber(row.avg_score, 1)}</Table.Td>
-              <Table.Td className={classForSigned(row.avg_pct_change)}>{formatPct(row.avg_pct_change)}</Table.Td>
-              <Table.Td>{formatPct(row.avg_turnover)}</Table.Td>
-              <Table.Td>
-                <div className="sector-top-names">
-                  {row.top_names.slice(0, 3).map((name) => <span key={name}>{name}</span>)}
-                </div>
-              </Table.Td>
-            </Table.Tr>
-          ))}
-        </Table.Tbody>
-      </Table>
-    </Table.ScrollContainer>
+    <div className={compact ? 'sector-flow-chart compact' : 'sector-flow-chart'}>
+      {rows.map((row, index) => {
+        const width = Math.max(6, Math.min(100, (row.amount / maxAmount) * 100));
+        const tone = row.avg_pct_change >= 0 ? 'red' : 'teal';
+        return (
+          <div className="sector-flow-row" key={row.name}>
+            <div className="sector-flow-head">
+              <Group gap={8}>
+                <span className="sector-flow-rank">#{index + 1}</span>
+                <Text fw={900} size="sm">{row.name}</Text>
+                <Badge color={tone} variant="light">{formatPct(row.avg_pct_change)}</Badge>
+              </Group>
+              <Text size="xs" fw={900}>{formatMoney(row.amount)}</Text>
+            </div>
+            <div className="sector-flow-track" aria-label={`${row.name} 成交额占比 ${formatPct(row.amount_share)}`}>
+              <div
+                className={`sector-flow-bar ${tone}`}
+                style={{ width: `${width}%` }}
+              />
+            </div>
+            <div className="sector-flow-meta">
+              <span>{row.count} 只</span>
+              <span>占比 {formatPct(row.amount_share)}</span>
+              <span>均分 {formatNumber(row.avg_score, 1)}</span>
+              <span>换手 {formatPct(row.avg_turnover)}</span>
+            </div>
+            <div className="sector-top-names">
+              {row.top_names.slice(0, compact ? 2 : 4).map((item) => {
+                const stock = parseSectorTopName(item);
+                return (
+                  <StockKlineHover code={stock.code} name={stock.name} tradeDate={tradeDate} key={item}>
+                    <span>{stock.name}</span>
+                  </StockKlineHover>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
-function SectorStockList({ rows }: { rows: SectorStockRow[] }) {
+function SectorStockList({ rows, tradeDate }: { rows: SectorStockRow[]; tradeDate: string }) {
   if (!rows.length) {
     return (
       <div className="empty-state refined">
@@ -2675,22 +2694,172 @@ function SectorStockList({ rows }: { rows: SectorStockRow[] }) {
   return (
     <Stack gap="xs">
       {rows.map((row, index) => (
-        <div className="sector-stock-row" key={`${row.code}-${index}`}>
-          <div>
-            <Group gap={6} mb={2}>
-              <Text fw={900} size="sm">{row.name}</Text>
-              <Badge color="gray" variant="light">{row.board}</Badge>
-            </Group>
-            <Text size="xs" c="dimmed">{row.code} · {row.tag || row.industry || '未补行业'}</Text>
+        <StockKlineHover code={row.code} name={row.name} tradeDate={tradeDate} block key={`${row.code}-${index}`}>
+          <div className="sector-stock-row">
+            <div>
+              <Group gap={6} mb={2}>
+                <Text fw={900} size="sm">{row.name}</Text>
+                <Badge color="gray" variant="light">{row.board}</Badge>
+              </Group>
+              <Text size="xs" c="dimmed">{row.code} · {row.tag || row.industry || '未补行业'}</Text>
+            </div>
+            <div>
+              <strong>{formatMoney(row.amount)}</strong>
+              <span className={classForSigned(row.pct_change)}>{formatPct(row.pct_change)}</span>
+            </div>
           </div>
-          <div>
-            <strong>{formatMoney(row.amount)}</strong>
-            <span className={classForSigned(row.pct_change)}>{formatPct(row.pct_change)}</span>
-          </div>
-        </div>
+        </StockKlineHover>
       ))}
     </Stack>
   );
+}
+
+function StockKlineHover({
+  code,
+  name,
+  tradeDate,
+  block = false,
+  children
+}: {
+  code: string;
+  name: string;
+  tradeDate: string;
+  block?: boolean;
+  children: ReactNode;
+}) {
+  const [opened, setOpened] = useState(false);
+  const stockQuery = useQuery({
+    queryKey: ['sector-hover-kline', code, tradeDate],
+    queryFn: () => runStockAnalysis({
+      query: code,
+      trade_date: tradeDate,
+      refresh: false,
+      quantity: null,
+      cost_price: null
+    }),
+    enabled: opened && Boolean(code && tradeDate),
+    staleTime: 10 * 60_000,
+    retry: 1
+  });
+  const points = stockQuery.data?.trend_points ?? [];
+  const latest = points.at(-1);
+  const error = stockQuery.error instanceof Error ? stockQuery.error.message : '';
+
+  function openPreview() {
+    setOpened(true);
+  }
+
+  function showPreview(event: ReactMouseEvent<HTMLElement>) {
+    event.preventDefault();
+    setOpened(true);
+  }
+
+  const targetProps = {
+    tabIndex: 0,
+    onMouseEnter: openPreview,
+    onPointerEnter: openPreview,
+    onFocus: openPreview,
+    onClick: showPreview,
+    onMouseLeave: () => setOpened(false),
+    onPointerLeave: () => setOpened(false),
+    onBlur: () => setOpened(false)
+  };
+
+  return (
+    <Popover width={300} shadow="md" radius="md" withinPortal opened={opened} onChange={setOpened} position="top" withArrow>
+      <Popover.Target>
+        {block ? (
+          <div className="kline-hover-target block" {...targetProps}>{children}</div>
+        ) : (
+          <span className="kline-hover-target" {...targetProps}>{children}</span>
+        )}
+      </Popover.Target>
+      <Popover.Dropdown>
+        <div className="kline-hover-card">
+          <Group justify="space-between" align="flex-start" mb="xs">
+            <div>
+              <Text fw={900} size="sm">{name}</Text>
+              <Text size="xs" c="dimmed">{code} · {displayTradeDate(tradeDate)}</Text>
+            </div>
+            <Badge color="blue" variant="light">日K</Badge>
+          </Group>
+          {stockQuery.isFetching && !points.length ? (
+            <div className="mini-kline-state">K 线加载中...</div>
+          ) : error && !points.length ? (
+            <div className="mini-kline-state error">{error}</div>
+          ) : points.length ? (
+            <>
+              <MiniKlineChart points={points.slice(-36)} />
+              <Text size="xs" c="dimmed" mt={6}>
+                最新 {latest?.日期 ?? '-'} · 收盘 {formatNumber(latest?.收盘)}
+              </Text>
+            </>
+          ) : (
+            <div className="mini-kline-state">暂无日 K 数据</div>
+          )}
+        </div>
+      </Popover.Dropdown>
+    </Popover>
+  );
+}
+
+function MiniKlineChart({ points }: { points: TrendPoint[] }) {
+  const clean = points.filter((point) => Number.isFinite(Number(point.收盘)));
+  if (!clean.length) {
+    return <div className="mini-kline-state">暂无日 K 数据</div>;
+  }
+
+  const width = 252;
+  const height = 118;
+  const top = 10;
+  const chartHeight = 74;
+  const prices = clean
+    .flatMap((point) => [point.开盘, point.收盘, point.最高, point.最低].map(Number))
+    .filter(Number.isFinite);
+  const volumes = clean.map((point) => Number(point.成交量 ?? 0)).filter(Number.isFinite);
+  const min = Math.min(...prices);
+  const max = Math.max(...prices);
+  const span = Math.max(max - min, max * 0.01, 0.01);
+  const step = width / Math.max(clean.length, 1);
+  const candleWidth = Math.max(3, Math.min(8, step * 0.56));
+  const volumeMax = Math.max(...volumes, 1);
+  const y = (value: number) => top + (max - value) / span * chartHeight;
+
+  return (
+    <svg className="mini-kline-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="近期日 K 缩略图">
+      <line x1="0" x2={width} y1={top} y2={top} />
+      <line x1="0" x2={width} y1={top + chartHeight / 2} y2={top + chartHeight / 2} />
+      <line x1="0" x2={width} y1={top + chartHeight} y2={top + chartHeight} />
+      {clean.map((point, index) => {
+        const open = Number(point.开盘 ?? point.收盘);
+        const close = Number(point.收盘);
+        const high = Number(point.最高 ?? point.收盘);
+        const low = Number(point.最低 ?? point.收盘);
+        const volume = Number(point.成交量 ?? 0);
+        const x = index * step + step / 2;
+        const isUp = close >= open;
+        const color = isUp ? '#c43f3f' : '#0b8f74';
+        const bodyTop = Math.min(y(open), y(close));
+        const bodyHeight = Math.max(2, Math.abs(y(open) - y(close)));
+        const volumeHeight = Math.max(1, volume / volumeMax * 22);
+        return (
+          <g key={`${point.日期}-${index}`}>
+            <line x1={x} x2={x} y1={y(high)} y2={y(low)} stroke={color} strokeWidth="1.2" />
+            <rect x={x - candleWidth / 2} y={bodyTop} width={candleWidth} height={bodyHeight} rx="0.8" fill={color} />
+            <rect x={x - candleWidth / 2} y={height - volumeHeight - 4} width={candleWidth} height={volumeHeight} rx="0.8" fill={isUp ? 'rgba(196,63,63,0.28)' : 'rgba(11,143,116,0.28)'} />
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+function parseSectorTopName(value: string): { name: string; code: string } {
+  const match = value.match(/^(.+?)\((\d{6})\)$/);
+  if (!match) {
+    return { name: value, code: '' };
+  }
+  return { name: match[1], code: match[2] };
 }
 
 function financialToneColor(tone?: string | null): 'teal' | 'orange' | 'red' | 'blue' | 'gray' {

@@ -386,28 +386,6 @@ button {
   word-break: break-word;
 }
 
-.aggregate-table {
-  min-width: 460px;
-  font-size: 12px;
-}
-
-.aggregate-table th {
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 900;
-}
-
-.aggregate-table td {
-  color: var(--ink-2);
-  font-variant-numeric: tabular-nums;
-}
-
-.aggregate-table th:first-child,
-.aggregate-table td:first-child {
-  min-width: 82px;
-  white-space: nowrap;
-}
-
 .sector-controls {
   gap: 16px;
 }
@@ -427,6 +405,77 @@ button {
   top: 18px;
 }
 
+.sector-flow-chart {
+  display: grid;
+  gap: 10px;
+}
+
+.sector-flow-chart.compact {
+  gap: 8px;
+}
+
+.sector-flow-row {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background:
+    linear-gradient(90deg, rgba(236, 253, 245, 0.72), rgba(255, 255, 255, 0.92) 48%),
+    var(--surface-soft);
+}
+
+.sector-flow-head,
+.sector-flow-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.sector-flow-rank {
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  background: var(--ink);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+}
+
+.sector-flow-track {
+  position: relative;
+  height: 12px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e7edf5;
+}
+
+.sector-flow-bar {
+  height: 100%;
+  border-radius: inherit;
+}
+
+.sector-flow-bar.red {
+  background: linear-gradient(90deg, rgba(255, 214, 214, 0.95), rgba(196, 63, 63, 0.86));
+}
+
+.sector-flow-bar.teal {
+  background: linear-gradient(90deg, rgba(207, 250, 241, 0.95), rgba(11, 143, 116, 0.86));
+}
+
+.sector-flow-meta {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+}
+
 .sector-top-names {
   display: flex;
   flex-wrap: wrap;
@@ -435,7 +484,8 @@ button {
   max-width: 260px;
 }
 
-.sector-top-names span {
+.sector-top-names .kline-hover-target {
+  align-items: center;
   max-width: 124px;
   overflow: hidden;
   padding: 3px 6px;
@@ -446,6 +496,72 @@ button {
   font-weight: 800;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.sector-top-names .kline-hover-target > span {
+  min-width: 0;
+  overflow: hidden;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kline-hover-target {
+  display: inline-flex;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.kline-hover-target.block {
+  display: block;
+}
+
+.kline-hover-target:hover .sector-stock-row,
+.kline-hover-target:focus-within .sector-stock-row {
+  border-color: rgba(34, 197, 170, 0.42);
+  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.08);
+}
+
+.kline-hover-card {
+  width: 100%;
+}
+
+.mini-kline-chart {
+  display: block;
+  width: 100%;
+  min-height: 118px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.mini-kline-chart > line {
+  stroke: #eef2f6;
+  stroke-width: 1;
+}
+
+.mini-kline-state {
+  display: grid;
+  place-items: center;
+  min-height: 118px;
+  padding: 10px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+  text-align: center;
+}
+
+.mini-kline-state.error {
+  border-color: rgba(196, 63, 63, 0.45);
+  background: var(--red-soft);
+  color: var(--red);
 }
 
 .sector-stock-row {
