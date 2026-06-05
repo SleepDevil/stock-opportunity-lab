@@ -179,7 +179,7 @@ const pageMeta: Record<AppRoutePath, { title: string; subtitle: string }> = {
   },
   '/alerts': {
     title: '消息异动 - 量价告警',
-    subtitle: '盘中轮询观察池分钟行情，捕捉低吸、深跌、突破、放量和破位风险。'
+    subtitle: '盘中轮询观察池实时快照，捕捉低吸、深跌、突破、放量和破位风险，并可点开查看分时与日 K。'
   },
   '/sectors': {
     title: '板块资金 - 候选池归因',
@@ -820,17 +820,7 @@ function StockAnalysisPage() {
     if (!analysis) {
       return [];
     }
-    return analysis.trend_points.map((point) => ({
-      时间: point.日期,
-      股票代码: analysis.code,
-      开盘: point.开盘,
-      收盘: point.收盘,
-      最高: point.最高,
-      最低: point.最低,
-      成交量: point.成交量 ?? null,
-      成交额: point.成交额 ?? null,
-      均价: null
-    }));
+    return trendPointsToChartRows(analysis.trend_points, analysis.code);
   }, [analysis]);
   const chartRows = stockChartMode === 'intraday' ? (stockIntraday.data?.rows ?? []) : dailyChartRows;
   const chartLoading = stockChartMode === 'intraday' && stockIntraday.isFetching && !stockIntraday.data;
@@ -1560,6 +1550,7 @@ function AlertsPage() {
   const [monitorScope, setMonitorScope] = useState<'candidates' | 'targets'>('candidates');
   const [screenDateTouched, setScreenDateTouched] = useState(false);
   const [alertDateTouched, setAlertDateTouched] = useState(false);
+  const [selectedAlert, setSelectedAlert] = useState<IntradayAlert | null>(null);
 
   const reportsQuery = useQuery({
     queryKey: ['screen-reports'],
@@ -1636,6 +1627,9 @@ function AlertsPage() {
   });
   const alertScreen = selectedReportQuery.data;
   const alertCandidates = alertScreen?.candidates ?? [];
+  const alertCandidateByCode = useMemo(() => {
+    return new Map(alertCandidates.map((candidate) => [String(candidate.代码).padStart(6, '0'), candidate]));
+  }, [alertCandidates]);
   const plannedTargetCount = alertScreen?.target_count ?? alertScreen?.filtered_count ?? alertCandidates.length;
 
   const alertQuery = useQuery({
@@ -1765,20 +1759,27 @@ function AlertsPage() {
         ) : alerts.length ? (
           <Stack gap="xs">
             {alerts.map((item) => (
-              <div className="alert-row" key={item.id}>
+              <button className="alert-row alert-row-button" type="button" key={item.id} onClick={() => setSelectedAlert(item)}>
                 <ThemeIcon color={alertTone(item.tone)} variant="light" radius="xl">
                   {alertIcon(item.signal)}
                 </ThemeIcon>
                 <div>
                   <Text fw={900}>{item.title}</Text>
                   <Text size="sm" c="dimmed">{item.detail}</Text>
-                  <Text size="xs" c="dimmed" mt={4}>
+                  <Text className="alert-row-meta" size="xs" c="dimmed" mt={4}>
                     {item.code} · 最新 {formatNumber(item.latest_price)} · 较扫描价 {formatPct(item.pct_from_reference)}
                     {item.triggered_at ? ` · ${item.triggered_at}` : ''}
                   </Text>
                 </div>
-                <Badge color={alertTone(item.tone)} variant="light">{item.level}</Badge>
-              </div>
+                <Group gap="xs" justify="flex-end">
+                  <Badge color={alertTone(item.tone)} variant="light">{item.level}</Badge>
+                  <Tooltip label="查看分时和日 K">
+                    <ThemeIcon color="dark" variant="light" radius="xl">
+                      <LineChart size={15} />
+                    </ThemeIcon>
+                  </Tooltip>
+                </Group>
+              </button>
             ))}
           </Stack>
         ) : (
@@ -1794,7 +1795,7 @@ function AlertsPage() {
           <div>
             <Text fw={900}>观察池维护</Text>
             <Text size="sm" c="dimmed">
-              推荐观察池监控 Top 候选的分钟线；全部目标池监控盘后扫描时经过设置过滤后的完整目标对象，使用全市场快照提高盘中响应速度。
+              推荐观察池监控 Top 候选；全部目标池监控盘后扫描时经过设置过滤后的完整目标对象。告警列表用全市场快照提高响应速度，点开个股后再查看分时和日 K。
             </Text>
           </div>
           <Button
@@ -1809,7 +1810,185 @@ function AlertsPage() {
           </Button>
         </Group>
       </Paper>
+      <AlertTrendDrawer
+        alert={selectedAlert}
+        candidate={selectedAlert ? alertCandidateByCode.get(selectedAlert.code) ?? null : null}
+        tradeDate={toTradeDate(alertDate)}
+        screenDate={alertScreen?.trade_date ?? selectedScreenTradeDate}
+        onClose={() => setSelectedAlert(null)}
+      />
     </Stack>
+  );
+}
+
+function AlertTrendDrawer({
+  alert,
+  candidate,
+  tradeDate,
+  screenDate,
+  onClose
+}: {
+  alert: IntradayAlert | null;
+  candidate: Candidate | null;
+  tradeDate: string;
+  screenDate: string;
+  onClose: () => void;
+}) {
+  const [intradayPeriod, setIntradayPeriod] = useState('1');
+  const [intradayMode, setIntradayMode] = useState<'line' | 'candle'>('line');
+  const opened = Boolean(alert);
+  const stockCode = alert?.code ?? '';
+  const intradayQuery = useQuery({
+    queryKey: ['alert-trend-intraday', stockCode, tradeDate, intradayPeriod],
+    queryFn: () => fetchIntraday({
+      symbol: stockCode,
+      period: intradayPeriod,
+      date: tradeDate,
+      source: 'em'
+    }),
+    enabled: opened && Boolean(stockCode && tradeDate),
+    staleTime: 60_000,
+    retry: 1
+  });
+  const stockAnalysisQuery = useQuery({
+    queryKey: ['alert-trend-stock-analysis', stockCode, tradeDate],
+    queryFn: () => runStockAnalysis({
+      query: stockCode,
+      trade_date: tradeDate,
+      refresh: false,
+      quantity: null,
+      cost_price: null
+    }),
+    enabled: opened && Boolean(stockCode && tradeDate),
+    staleTime: 5 * 60_000,
+    retry: 1
+  });
+
+  const candidateDailyRows = useMemo(() => {
+    return trendPointsToChartRows(normalizeTrendPoints(candidate?.走势点位), stockCode);
+  }, [candidate?.走势点位, stockCode]);
+  const analysisDailyRows = useMemo(() => {
+    return trendPointsToChartRows(stockAnalysisQuery.data?.trend_points ?? [], stockCode);
+  }, [stockAnalysisQuery.data?.trend_points, stockCode]);
+  const dailyRows = analysisDailyRows.length ? analysisDailyRows : candidateDailyRows;
+  const intradayRows = intradayQuery.data?.rows ?? [];
+  const intradayError = intradayQuery.error instanceof Error ? intradayQuery.error.message : '';
+  const dailyError = stockAnalysisQuery.error instanceof Error && !dailyRows.length ? stockAnalysisQuery.error.message : '';
+  const latestDaily = dailyRows.at(-1);
+
+  return (
+    <Drawer opened={opened} onClose={onClose} position="right" size="xl" title={alert ? `${alert.name} ${alert.code}` : '走势详情'}>
+      {alert ? (
+        <Stack gap="md">
+          <Paper className="evidence-card" withBorder>
+            <Group justify="space-between" align="flex-start" mb="xs">
+              <div>
+                <Text fw={900}>{alert.title}</Text>
+                <Text size="sm" c="dimmed">{alert.detail}</Text>
+              </div>
+              <Badge color={alertTone(alert.tone)} variant="light">{alert.level}</Badge>
+            </Group>
+            <SimpleGrid cols={{ base: 2, sm: 4 }} spacing="xs">
+              <EvidenceMetric label="最新价" value={formatNumber(alert.latest_price)} compact />
+              <EvidenceMetric label="较扫描价" value={formatPct(alert.pct_from_reference)} compact />
+              <EvidenceMetric label="低吸区间" value={`${formatNumber(alert.plan_low)} - ${formatNumber(alert.plan_high)}`} compact />
+              <EvidenceMetric label="突破确认" value={formatNumber(alert.breakout_price)} compact />
+            </SimpleGrid>
+          </Paper>
+
+          <Tabs defaultValue="intraday" className="evidence-tabs" keepMounted={false}>
+            <Tabs.List>
+              <Tabs.Tab value="intraday" leftSection={<Activity size={15} />}>分时</Tabs.Tab>
+              <Tabs.Tab value="daily" leftSection={<LineChart size={15} />}>日 K</Tabs.Tab>
+            </Tabs.List>
+
+            <Tabs.Panel value="intraday" pt="md">
+              <Paper className="evidence-card" withBorder>
+                <Group justify="space-between" align="flex-start" mb="xs">
+                  <div>
+                    <Text fw={900}>分时 / 分钟 K</Text>
+                    <Text size="xs" c="dimmed">
+                      {intradayRows.length
+                        ? `${displayTradeDate(tradeDate)} · ${intradayRows.length} 个分钟点。`
+                        : `${displayTradeDate(tradeDate)} 分钟行情，缺失时不补假数据。`}
+                    </Text>
+                  </div>
+                  <Badge color={intradayRows.length ? 'teal' : 'gray'} variant="light">
+                    {intradayQuery.isFetching ? '更新中' : `${intradayPeriod} 分钟`}
+                  </Badge>
+                </Group>
+
+                <div className="intraday-toolbar">
+                  <Button.Group>
+                    <Button
+                      size="xs"
+                      color={intradayMode === 'line' ? 'teal' : 'gray'}
+                      variant={intradayMode === 'line' ? 'filled' : 'light'}
+                      onClick={() => setIntradayMode('line')}
+                    >
+                      分时线
+                    </Button>
+                    <Button
+                      size="xs"
+                      color={intradayMode === 'candle' ? 'teal' : 'gray'}
+                      variant={intradayMode === 'candle' ? 'filled' : 'light'}
+                      onClick={() => setIntradayMode('candle')}
+                    >
+                      K线
+                    </Button>
+                  </Button.Group>
+                  <div className="period-pills">
+                    {['1', '5', '15', '30', '60'].map((period) => (
+                      <Button
+                        size="xs"
+                        variant={intradayPeriod === period ? 'filled' : 'light'}
+                        color={intradayPeriod === period ? 'dark' : 'gray'}
+                        onClick={() => setIntradayPeriod(period)}
+                        key={period}
+                      >
+                        {period}分
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+
+                <IntradayChart
+                  rows={intradayRows}
+                  mode={intradayMode}
+                  loading={intradayQuery.isFetching && !intradayRows.length}
+                  error={intradayError}
+                />
+              </Paper>
+            </Tabs.Panel>
+
+            <Tabs.Panel value="daily" pt="md">
+              <Paper className="evidence-card" withBorder>
+                <Group justify="space-between" align="flex-start" mb="xs">
+                  <div>
+                    <Text fw={900}>近期日 K</Text>
+                    <Text size="xs" c="dimmed">
+                      {dailyRows.length
+                        ? `${screenDate ? `选股报告 ${displayTradeDate(screenDate)} · ` : ''}最近 ${dailyRows.length} 个交易日，最新 ${latestDaily?.时间 ?? '-'}。`
+                        : '正在读取单股日 K；如果数据源缺失，会明确显示为空。'}
+                    </Text>
+                  </div>
+                  <Badge color={analysisDailyRows.length ? 'blue' : 'gray'} variant="light">
+                    {stockAnalysisQuery.isFetching && !analysisDailyRows.length ? '更新中' : analysisDailyRows.length ? '60日' : '报告点位'}
+                  </Badge>
+                </Group>
+                <IntradayChart
+                  rows={dailyRows}
+                  mode="candle"
+                  timeMode="daily"
+                  loading={stockAnalysisQuery.isFetching && !dailyRows.length}
+                  error={dailyError}
+                />
+              </Paper>
+            </Tabs.Panel>
+          </Tabs>
+        </Stack>
+      ) : null}
+    </Drawer>
   );
 }
 
@@ -2769,6 +2948,22 @@ function normalizeTrendPoints(input: Candidate['走势点位']): TrendPoint[] {
   } catch {
     return [];
   }
+}
+
+function trendPointsToChartRows(points: TrendPoint[], code: string): IntradayPoint[] {
+  return points
+    .filter((point) => Number.isFinite(Number(point.收盘)))
+    .map((point) => ({
+      时间: point.日期,
+      股票代码: code,
+      开盘: point.开盘,
+      收盘: point.收盘,
+      最高: point.最高,
+      最低: point.最低,
+      成交量: point.成交量 ?? null,
+      成交额: point.成交额 ?? null,
+      均价: null
+    }));
 }
 
 function boardColor(board?: string) {

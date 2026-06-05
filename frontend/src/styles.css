@@ -362,6 +362,30 @@ button {
   background: var(--surface-soft);
 }
 
+.alert-row-button {
+  width: 100%;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.alert-row-button:hover {
+  border-color: rgba(34, 197, 170, 0.42);
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.08);
+  transform: translateY(-1px);
+}
+
+.alert-row-button:focus-visible {
+  outline: 3px solid rgba(34, 197, 170, 0.28);
+  outline-offset: 2px;
+}
+
+.alert-row-meta {
+  word-break: break-word;
+}
+
 .aggregate-table {
   min-width: 460px;
   font-size: 12px;
