@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import os
-from datetime import datetime
+from datetime import date, datetime
 
 from app.config import AppConfig, ScreenConfig
 from app.models import ScreenRequest
@@ -1134,3 +1134,63 @@ def test_intraday_alerts_candidate_pool_uses_realtime_snapshot(tmp_path: Path) -
     assert result["candidate_count"] == 1
     assert result["alerts"][0]["signal"] == "entry_zone"
     assert result["alerts"][0]["triggered_at"] == "2026-06-05 快照"
+
+
+def test_intraday_alerts_reuses_stale_current_snapshot_without_blocking(tmp_path: Path, monkeypatch) -> None:
+    import pandas as pd
+
+    today = date.today().strftime("%Y%m%d")
+
+    class BlockingProvider:
+        def spot(self, trade_date: str, refresh: bool = False) -> pd.DataFrame:
+            raise AssertionError("stale current-day snapshot should return before synchronous refresh")
+
+    scheduled: list[str] = []
+    monkeypatch.setattr(
+        "app.services.intraday_alerts.schedule_spot_refresh",
+        lambda provider, trade_date: scheduled.append(trade_date),
+    )
+
+    config = AppConfig(data_dir=tmp_path)
+    config.ensure_dirs()
+    pd.DataFrame(
+        [
+            {
+                "代码": "600162",
+                "名称": "香江控股",
+                "最新价": 3.35,
+                "计划低吸价": 3.30,
+                "计划买入上限": 3.39,
+                "突破确认价": 3.44,
+                "高开放弃价": 3.50,
+                "止损参考价": 3.17,
+            }
+        ]
+    ).to_csv(config.reports_dir / "screen_20260604.csv", index=False)
+    cache = config.raw_dir / f"spot_{today}.csv"
+    pd.DataFrame(
+        [
+            {
+                "代码": "600162",
+                "最新价": 3.39,
+                "今开": 3.20,
+                "最低": 3.28,
+                "量比": 2.8,
+            }
+        ]
+    ).to_csv(cache, index=False)
+    os.utime(cache, (1, 1))
+
+    result = run_intraday_alerts(
+        provider=BlockingProvider(),
+        config=config,
+        screen_date="20260604",
+        trade_date=today,
+        refresh=False,
+        limit=30,
+        monitor_scope="candidates",
+    )
+
+    assert scheduled == [today]
+    assert result["candidate_count"] == 1
+    assert result["alerts"][0]["signal"] == "entry_zone"
