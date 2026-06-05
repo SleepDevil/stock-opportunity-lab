@@ -1,17 +1,22 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
+from datetime import date, datetime
 import math
+import threading
 from typing import Any
 
 import pandas as pd
 
 from app.config import AppConfig
 from app.models import IntradayAlert
-from app.services.data_provider import MarketDataProvider
+from app.services.data_provider import MarketDataProvider, should_use_spot_cache
 from app.services.screener import load_screen_report, load_screen_targets
 from app.utils import display_date, normalize_trade_date
+
+
+_SPOT_REFRESH_LOCK = threading.Lock()
+_SPOT_REFRESHING_DATES: set[str] = set()
 
 
 def run_intraday_alerts(
@@ -26,7 +31,7 @@ def run_intraday_alerts(
     screen = normalize_trade_date(screen_date)
     actual = normalize_trade_date(trade_date)
     candidates = load_monitor_pool(config, screen, monitor_scope, limit)
-    alerts = collect_spot_alerts(provider, candidates, actual, refresh)
+    alerts = collect_cached_spot_alerts(provider, config, candidates, actual, refresh)
 
     ordered = sorted(alerts, key=alert_sort_key)[:60]
     return {
@@ -74,9 +79,16 @@ def collect_spot_alerts(
     trade_date: str,
     refresh: bool,
 ) -> list[IntradayAlert]:
+    return collect_spot_alerts_with_snapshot(candidates, trade_date, spot=provider.spot(trade_date, refresh=refresh))
+
+
+def collect_spot_alerts_with_snapshot(
+    candidates: pd.DataFrame,
+    trade_date: str,
+    spot: pd.DataFrame,
+) -> list[IntradayAlert]:
     if candidates.empty:
         return []
-    spot = provider.spot(trade_date, refresh=refresh)
     if "代码" not in spot.columns:
         return []
     spot = spot.copy()
@@ -91,6 +103,50 @@ def collect_spot_alerts(
             continue
         alerts.extend(build_candidate_alerts_from_spot(candidate, spot_by_code.loc[code], trade_date))
     return alerts
+
+
+def collect_cached_spot_alerts(
+    provider: MarketDataProvider,
+    config: AppConfig,
+    candidates: pd.DataFrame,
+    trade_date: str,
+    refresh: bool,
+) -> list[IntradayAlert]:
+    spot = load_alert_spot_snapshot(provider, config, trade_date, refresh)
+    return collect_spot_alerts_with_snapshot(candidates, trade_date, spot)
+
+
+def load_alert_spot_snapshot(
+    provider: MarketDataProvider,
+    config: AppConfig,
+    trade_date: str,
+    refresh: bool,
+) -> pd.DataFrame:
+    normalized = normalize_trade_date(trade_date)
+    cache = config.raw_dir / f"spot_{normalized}.csv"
+    today = date.today().strftime("%Y%m%d")
+    if not refresh and normalized == today and cache.exists() and not should_use_spot_cache(normalized, cache):
+        schedule_spot_refresh(provider, normalized)
+        return pd.read_csv(cache, dtype={"代码": str})
+    return provider.spot(normalized, refresh=refresh)
+
+
+def schedule_spot_refresh(provider: MarketDataProvider, trade_date: str) -> None:
+    with _SPOT_REFRESH_LOCK:
+        if trade_date in _SPOT_REFRESHING_DATES:
+            return
+        _SPOT_REFRESHING_DATES.add(trade_date)
+
+    def refresh_worker() -> None:
+        try:
+            provider.spot(trade_date, refresh=True)
+        except Exception:
+            pass
+        finally:
+            with _SPOT_REFRESH_LOCK:
+                _SPOT_REFRESHING_DATES.discard(trade_date)
+
+    threading.Thread(target=refresh_worker, name=f"spot-refresh-{trade_date}", daemon=True).start()
 
 
 def candidate_intraday_alerts(
