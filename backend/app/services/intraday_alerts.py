@@ -26,10 +26,7 @@ def run_intraday_alerts(
     screen = normalize_trade_date(screen_date)
     actual = normalize_trade_date(trade_date)
     candidates = load_monitor_pool(config, screen, monitor_scope, limit)
-    if monitor_scope == "targets":
-        alerts = collect_spot_alerts(provider, candidates, actual, refresh)
-    else:
-        alerts = collect_intraday_alerts(provider, candidates, actual, refresh)
+    alerts = collect_spot_alerts(provider, candidates, actual, refresh)
 
     ordered = sorted(alerts, key=alert_sort_key)[:60]
     return {

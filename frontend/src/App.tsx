@@ -1554,11 +1554,12 @@ function BacktestPage() {
 }
 
 function AlertsPage() {
-  const { screen, handleScreen, screenLoading } = useAppState();
+  const { screen, runScreenWithOptions, screenLoading } = useAppState();
   const [alertScreenDate, setAlertScreenDate] = useState('');
   const [alertDate, setAlertDate] = useState(todayInputValue());
   const [monitorScope, setMonitorScope] = useState<'candidates' | 'targets'>('candidates');
   const [screenDateTouched, setScreenDateTouched] = useState(false);
+  const [alertDateTouched, setAlertDateTouched] = useState(false);
 
   const reportsQuery = useQuery({
     queryKey: ['screen-reports'],
@@ -1570,15 +1571,60 @@ function AlertsPage() {
     if (screenDateTouched) {
       return;
     }
-    const preferred = reportsQuery.data?.latest
-      ? displayTradeDate(reportsQuery.data.latest)
-      : screen?.trade_date
-        ? displayTradeDate(screen.trade_date)
-        : '';
+    const reportDates = reportsQuery.data?.dates ?? [];
+    const todayTradeDate = toTradeDate(todayInputValue());
+    const preferredTradeDate = reportDates.includes(todayTradeDate)
+      ? todayTradeDate
+      : reportsQuery.data?.latest
+        ? reportsQuery.data.latest
+        : screen?.trade_date
+          ? screen.trade_date
+          : '';
+    const preferred = preferredTradeDate
+      ? displayTradeDate(preferredTradeDate)
+      : '';
     if (preferred && preferred !== alertScreenDate) {
       setAlertScreenDate(preferred);
     }
-  }, [alertScreenDate, reportsQuery.data?.latest, screen?.trade_date, screenDateTouched]);
+  }, [alertScreenDate, reportsQuery.data?.dates, reportsQuery.data?.latest, screen?.trade_date, screenDateTouched]);
+
+  useEffect(() => {
+    if (alertDateTouched) {
+      return undefined;
+    }
+    function syncAlertDateToToday() {
+      const today = todayInputValue();
+      setAlertDate((value) => (value === today ? value : today));
+    }
+    syncAlertDateToToday();
+    window.addEventListener('focus', syncAlertDateToToday);
+    document.addEventListener('visibilitychange', syncAlertDateToToday);
+    const intervalId = window.setInterval(syncAlertDateToToday, 60_000);
+    return () => {
+      window.removeEventListener('focus', syncAlertDateToToday);
+      document.removeEventListener('visibilitychange', syncAlertDateToToday);
+      window.clearInterval(intervalId);
+    };
+  }, [alertDateTouched]);
+
+  function refreshAlerts() {
+    const today = todayInputValue();
+    if (!alertDateTouched && alertDate !== today) {
+      setAlertDate(today);
+      return;
+    }
+    void alertQuery.refetch();
+  }
+
+  function refreshMonitorPool() {
+    const today = todayInputValue();
+    setScreenDateTouched(false);
+    if (!alertDateTouched) {
+      setAlertDate(today);
+    }
+    runScreenWithOptions({ date: toTradeDate(today) });
+    void reportsQuery.refetch();
+  }
 
   const selectedScreenTradeDate = alertScreenDate ? toTradeDate(alertScreenDate) : '';
   const selectedReportQuery = useQuery({
@@ -1619,7 +1665,7 @@ function AlertsPage() {
       <Paper className="market-ribbon alerts-ribbon" withBorder>
         <RibbonCell label="选股日期" value={selectedScreenDisplay} detail="盘后报告口径" />
         <RibbonCell label="观察日期" value={selectedAlertDisplay} detail="盘中行情口径" />
-        <RibbonCell label="监控范围" value={scopeLabel} detail={monitorScope === 'targets' ? '快照批量监控' : '分钟线精细监控'} tone="accent" />
+        <RibbonCell label="监控范围" value={scopeLabel} detail={monitorScope === 'targets' ? '全量快照监控' : '实时快照监控'} tone="accent" />
         <RibbonCell label="推荐池" value={`${alertCandidates.length} 只`} detail={`已有报告 ${availableReportCount} 个`} />
         <RibbonCell label="目标池" value={`${plannedTargetCount} 只`} detail="设置过滤后的全量对象" />
         <RibbonCell label="数据状态" value={alertQuery.isFetching ? '更新中' : alertScreen ? '正常' : '待选择'} detail={alertQuery.data ? `最近 ${displayUpdateTime(alertQuery.data.generated_at)}` : '等待异动刷新'} tone={alertScreen ? 'good' : undefined} />
@@ -1638,7 +1684,7 @@ function AlertsPage() {
           <Group gap="xs" align="flex-end">
             <DatePickerInput
               label="选股日期"
-              value={alertScreenDate}
+              value={alertScreenDate || null}
               valueFormat="YYYY-MM-DD"
               placeholder="选择选股日期"
               locale="zh-cn"
@@ -1666,14 +1712,19 @@ function AlertsPage() {
               locale="zh-cn"
               dropdownType="popover"
               leftSection={<CalendarDays size={14} />}
-              onChange={(value) => value && setAlertDate(value)}
+              onChange={(value) => {
+                if (value) {
+                  setAlertDateTouched(true);
+                  setAlertDate(value);
+                }
+              }}
             />
             <Button
               size="sm"
               variant="light"
               color="dark"
               leftSection={<RefreshCw size={14} />}
-              onClick={() => alertQuery.refetch()}
+              onClick={refreshAlerts}
               loading={alertQuery.isFetching}
               disabled={!alertScreen}
             >
@@ -1751,11 +1802,7 @@ function AlertsPage() {
             variant="light"
             color="dark"
             leftSection={<Search size={14} />}
-            onClick={() => {
-              setScreenDateTouched(false);
-              handleScreen();
-              void reportsQuery.refetch();
-            }}
+            onClick={refreshMonitorPool}
             loading={screenLoading}
           >
             更新观察池

@@ -9,7 +9,7 @@ from app.models import ScreenRequest
 from app.services.notification_settings import load_notification_settings, save_notification_settings
 from app.services.notifications import send_feishu_tip
 from app.services.backtest import run_backtest
-from app.services.intraday_alerts import build_candidate_alerts, build_candidate_alerts_from_spot
+from app.services.intraday_alerts import build_candidate_alerts, build_candidate_alerts_from_spot, run_intraday_alerts
 from app.services.sector_flow import run_sector_flow
 from app.services.stock_analysis import run_stock_analysis, run_stock_search, stock_name_initials
 from app.services.data_provider import (
@@ -1081,3 +1081,56 @@ def test_spot_alerts_detect_target_pool_entry_zone() -> None:
     assert "volume_spike" in signals
     entry = next(item for item in alerts if item.signal == "entry_zone")
     assert entry.triggered_at == "2026-06-04 快照"
+
+
+def test_intraday_alerts_candidate_pool_uses_realtime_snapshot(tmp_path: Path) -> None:
+    import pandas as pd
+
+    class SnapshotOnlyProvider:
+        def spot(self, trade_date: str, refresh: bool = False) -> pd.DataFrame:
+            return pd.DataFrame(
+                [
+                    {
+                        "代码": "600162",
+                        "最新价": 3.39,
+                        "今开": 3.20,
+                        "最低": 3.28,
+                        "量比": 2.8,
+                    }
+                ]
+            )
+
+        def intraday(self, *args, **kwargs) -> pd.DataFrame:
+            raise AssertionError("candidate alerts should not block on per-stock minute data")
+
+    config = AppConfig(data_dir=tmp_path)
+    config.ensure_dirs()
+    pd.DataFrame(
+        [
+            {
+                "代码": "600162",
+                "名称": "香江控股",
+                "最新价": 3.35,
+                "计划低吸价": 3.30,
+                "计划买入上限": 3.39,
+                "突破确认价": 3.44,
+                "高开放弃价": 3.50,
+                "止损参考价": 3.17,
+            }
+        ]
+    ).to_csv(config.reports_dir / "screen_20260604.csv", index=False)
+
+    result = run_intraday_alerts(
+        provider=SnapshotOnlyProvider(),
+        config=config,
+        screen_date="20260604",
+        trade_date="20260605",
+        refresh=False,
+        limit=30,
+        monitor_scope="candidates",
+    )
+
+    assert result["trade_date"] == "20260605"
+    assert result["candidate_count"] == 1
+    assert result["alerts"][0]["signal"] == "entry_zone"
+    assert result["alerts"][0]["triggered_at"] == "2026-06-05 快照"
