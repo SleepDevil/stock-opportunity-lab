@@ -1,4 +1,5 @@
 .git
+.vercel
 .venv
 .omx
 artifacts
