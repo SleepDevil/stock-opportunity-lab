@@ -1,231 +1,189 @@
 from __future__ import annotations
 
+from dataclasses import asdict, dataclass, field
+import json
 import os
+from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
-import sys
-
-from fastapi import Body, Depends, FastAPI, HTTPException, Request, Response
+from urllib.parse import urlparse
 
 
-FUNCTION_ROOT = Path(__file__).resolve().parents[1]
-BACKEND_ROOT = FUNCTION_ROOT / "backend"
-
-if str(BACKEND_ROOT) not in sys.path:
-    sys.path.insert(0, str(BACKEND_ROOT))
-
-os.environ.setdefault("STOCK_LAB_DATA_DIR", "/tmp/stock-opportunity-lab")
-
-from app.config import CONFIG  # noqa: E402
-from app.models import (  # noqa: E402
-    ApiMessage,
-    LearningFeedbackRequest,
-    LearningFeedbackResponse,
-    LearningSummary,
-    NotificationSettings,
-    NotificationSettingsUpdate,
-    StrategyOptimizationResponse,
-    WechatArticleIngestRequest,
-    WechatArticleResponse,
-    WechatKnowledgeResponse,
-    WechatSubscriptionRequest,
-    WechatSubscriptionResponse,
-)
-from app.services.client_auth import (  # noqa: E402
-    CSRF_COOKIE_NAME,
-    ClientAuthError,
-    issue_csrf_token,
-    is_https_request,
-    reject_untrusted_origin_if_present,
-    require_client_auth,
-)
-from app.services.learning import append_user_feedback, load_learning_summary  # noqa: E402
-from app.services.notification_settings import load_notification_settings, save_notification_settings  # noqa: E402
-from app.services.notifications import send_feishu_tip  # noqa: E402
-from app.services.strategy_optimizer import build_strategy_optimization  # noqa: E402
-from app.services.wechat_knowledge import (  # noqa: E402
-    create_wechat_subscription as save_wechat_subscription,
-    ingest_wechat_article,
-    list_wechat_articles,
-    list_wechat_subscriptions,
-)
+DATA_DIR = Path(os.getenv("STOCK_LAB_DATA_DIR") or "/tmp/stock-opportunity-lab")
 
 
-app = FastAPI(title="Stock Opportunity Lab EdgeOne API", version="0.1.0")
-
-
-def require_frontend_client(request: Request) -> None:
-    try:
-        require_client_auth(request, CONFIG)
-    except ClientAuthError as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
-
-
-@app.get("/", response_model=ApiMessage)
-@app.get("/api", response_model=ApiMessage)
-@app.get("/health", response_model=ApiMessage)
-@app.get("/api/health", response_model=ApiMessage)
-def health() -> ApiMessage:
-    return ApiMessage(ok=True, message="ready")
-
-
-@app.get("/config")
-@app.get("/api/config")
-def get_config():
-    return CONFIG.public_dict()
-
-
-@app.get("/client-auth")
-@app.get("/api/client-auth")
-def get_client_auth(request: Request, response: Response) -> dict[str, str]:
-    try:
-        reject_untrusted_origin_if_present(request)
-    except ClientAuthError as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
-    token = issue_csrf_token(CONFIG)
-    response.set_cookie(
-        CSRF_COOKIE_NAME,
-        token,
-        httponly=True,
-        secure=is_https_request(request),
-        samesite="lax",
-        max_age=12 * 60 * 60,
-        path="/",
-    )
-    return {"csrf_token": token}
-
-
-@app.get(
-    "/notification-settings",
-    response_model=NotificationSettings,
-    dependencies=[Depends(require_frontend_client)],
-)
-@app.get(
-    "/api/notification-settings",
-    response_model=NotificationSettings,
-    dependencies=[Depends(require_frontend_client)],
-)
-def get_notification_settings(user_email: str | None = None) -> NotificationSettings:
-    try:
-        return load_notification_settings(CONFIG, user_email)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-@app.put(
-    "/notification-settings",
-    response_model=NotificationSettings,
-    dependencies=[Depends(require_frontend_client)],
-)
-@app.put(
-    "/api/notification-settings",
-    response_model=NotificationSettings,
-    dependencies=[Depends(require_frontend_client)],
-)
-def put_notification_settings(request: NotificationSettingsUpdate) -> NotificationSettings:
-    try:
-        return save_notification_settings(
-            CONFIG,
-            request.user_email,
-            board_exclusion_enabled=request.board_exclusion_enabled,
-            excluded_boards=request.excluded_boards,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-@app.post(
-    "/notification-settings/test",
-    response_model=ApiMessage,
-    dependencies=[Depends(require_frontend_client)],
-)
-@app.post(
-    "/api/notification-settings/test",
-    response_model=ApiMessage,
-    dependencies=[Depends(require_frontend_client)],
-)
-def test_notification(request: NotificationSettingsUpdate | None = Body(default=None)) -> ApiMessage:
-    settings = load_notification_settings(CONFIG, request.user_email if request else None)
-    if not settings.user_email:
-        raise HTTPException(status_code=400, detail="请先在策略设置里保存飞书账号邮箱")
-    ok = send_feishu_tip("Stock Opportunity Lab 测试通知：飞书机器人已经打通。", settings.user_email)
-    return ApiMessage(ok=ok, message="测试通知已发送" if ok else "通知发送失败，请检查飞书机器人配置和账号邮箱")
-
-
-@app.get("/wechat-knowledge", response_model=WechatKnowledgeResponse)
-@app.get("/api/wechat-knowledge", response_model=WechatKnowledgeResponse)
-def wechat_knowledge() -> WechatKnowledgeResponse:
-    return WechatKnowledgeResponse(
-        subscriptions=list_wechat_subscriptions(CONFIG),
-        articles=list_wechat_articles(CONFIG),
-        capability_note="微信没有稳定公开接口可订阅任意公众号全部历史消息；当前支持手动导入文章 URL，或为合规 RSS/feed 预留 feed_url。",
+@dataclass
+class ScreenConfig:
+    max_candidates: int = 30
+    min_price: float = 3.0
+    max_price: float = 300.0
+    min_amount: float = 200_000_000.0
+    min_turnover: float = 3.0
+    max_turnover: float = 15.0
+    min_volume_ratio: float = 1.2
+    min_float_market_cap: float = 3_000_000_000.0
+    max_float_market_cap: float = 50_000_000_000.0
+    min_total_market_cap: float = 5_000_000_000.0
+    max_total_market_cap: float = 100_000_000_000.0
+    min_pct_change: float = -6.0
+    max_pct_change: float = 9.5
+    exclude_name_regex: str = "ST|退|N|C"
+    score_weights: dict[str, float] = field(
+        default_factory=lambda: {
+            "amount": 0.25,
+            "volume_ratio": 0.20,
+            "turnover": 0.20,
+            "pct_change": 0.15,
+            "market_cap_fit": 0.10,
+            "sixty_day_strength": 0.10,
+        }
     )
 
 
-@app.post("/wechat-subscriptions", response_model=WechatSubscriptionResponse)
-@app.post("/api/wechat-subscriptions", response_model=WechatSubscriptionResponse)
-def create_wechat_subscription(request: WechatSubscriptionRequest) -> WechatSubscriptionResponse:
-    try:
-        result = save_wechat_subscription(
-            CONFIG,
-            source_name=request.source_name,
-            sample_url=request.sample_url,
-            feed_url=request.feed_url,
+@dataclass
+class StrategyConfig:
+    entry_discount: float = 0.012
+    entry_premium: float = 0.012
+    breakout_premium: float = 0.026
+    avoid_gap_up: float = 0.045
+    stop_loss: float = 0.055
+    take_profit: float = 0.085
+    max_single_position_pct: float = 12.0
+    risk_per_trade_pct: float = 1.0
+
+
+SCREEN = ScreenConfig()
+STRATEGY = StrategyConfig()
+
+
+class handler(BaseHTTPRequestHandler):
+    def do_OPTIONS(self):
+        self._json({"ok": True}, headers={"Allow": "GET,POST,PUT,OPTIONS"})
+
+    def do_GET(self):
+        path = api_path(self.path)
+        if path in ("", "/", "/health"):
+            self._json({"ok": True, "message": "ready"})
+            return
+        if path == "/config":
+            self._json(public_config())
+            return
+        if path == "/client-auth":
+            self._json({"csrf_token": "edgeone-light-backend"})
+            return
+        if path == "/learning-summary":
+            self._json(empty_learning_summary())
+            return
+        if path == "/strategy-optimization":
+            self._json(strategy_optimization())
+            return
+        if path == "/wechat-knowledge":
+            self._json(
+                {
+                    "subscriptions": [],
+                    "articles": [],
+                    "capability_note": "EdgeOne 当前部署为轻后端；公众号知识写入请使用 Vercel/Docker 后端。",
+                }
+            )
+            return
+        self._unavailable()
+
+    def do_POST(self):
+        self._unavailable()
+
+    def do_PUT(self):
+        self._unavailable()
+
+    def _unavailable(self):
+        self._json(
+            {
+                "detail": (
+                    "EdgeOne 当前部署为轻后端：支持前端、健康检查、配置和只读学习摘要。"
+                    "用户设置、公众号写入、盘后扫描、实时行情和财务采集请使用 Vercel/Docker 后端或后续独立 worker。"
+                )
+            },
+            status=HTTPStatus.SERVICE_UNAVAILABLE,
         )
-        return WechatSubscriptionResponse(**result)
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    def _json(self, payload: object, *, status: int = HTTPStatus.OK, headers: dict[str, str] | None = None) -> None:
+        body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(body)))
+        for key, value in (headers or {}).items():
+            self.send_header(key, value)
+        self.end_headers()
+        self.wfile.write(body)
 
 
-@app.post("/wechat-articles", response_model=WechatArticleResponse)
-@app.post("/api/wechat-articles", response_model=WechatArticleResponse)
-def ingest_wechat_article_api(request: WechatArticleIngestRequest) -> WechatArticleResponse:
-    try:
-        result = ingest_wechat_article(
-            CONFIG,
-            source_name=request.source_name,
-            article_url=request.article_url,
-            html=request.html,
-        )
-        return WechatArticleResponse(**result)
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+def api_path(raw_path: str) -> str:
+    path = urlparse(raw_path).path
+    if path.startswith("/api"):
+        path = path[4:]
+    return path or "/"
 
 
-@app.get("/learning-summary", response_model=LearningSummary)
-@app.get("/api/learning-summary", response_model=LearningSummary)
-def learning_summary() -> LearningSummary:
-    return LearningSummary(**load_learning_summary(CONFIG))
+def public_config() -> dict[str, object]:
+    database_url = os.getenv("STOCK_LAB_DATABASE_URL")
+    return {
+        "project_root": "/edgeone/cloud-functions",
+        "data_dir": str(DATA_DIR),
+        "database_url": mask_database_url(database_url) if database_url else str(DATA_DIR / "stock_lab.sqlite3"),
+        "feishu_app_id": os.getenv("STOCK_LAB_FEISHU_APP_ID", "cli_a6f82b2e17f6100c"),
+        "feishu_app_secret": "***" if os.getenv("STOCK_LAB_FEISHU_APP_SECRET") else None,
+        "client_auth_secret": "***",
+        "screen": asdict(SCREEN),
+        "strategy": asdict(STRATEGY),
+    }
 
 
-@app.post("/learning-feedback", response_model=LearningFeedbackResponse)
-@app.post("/api/learning-feedback", response_model=LearningFeedbackResponse)
-def learning_feedback(request: LearningFeedbackRequest) -> LearningFeedbackResponse:
-    try:
-        result = append_user_feedback(
-            CONFIG,
-            screen_date=request.screen_date,
-            actual_date=request.actual_date,
-            code=request.code,
-            note=request.note,
-            author=request.author,
-        )
-        return LearningFeedbackResponse(**result)
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+def mask_database_url(url: str) -> str:
+    if "@" not in url or "://" not in url:
+        return url
+    scheme, rest = url.split("://", 1)
+    return f"{scheme}://***@{rest.split('@', 1)[1]}"
 
 
-@app.get("/strategy-optimization", response_model=StrategyOptimizationResponse)
-@app.get("/api/strategy-optimization", response_model=StrategyOptimizationResponse)
-def strategy_optimization() -> StrategyOptimizationResponse:
-    return StrategyOptimizationResponse(**build_strategy_optimization(CONFIG))
+def empty_learning_summary() -> dict[str, object]:
+    return {
+        "total_cases": 0,
+        "buy_cases": 0,
+        "winning_buys": 0,
+        "losing_buys": 0,
+        "missed_cases": 0,
+        "buy_win_rate": 0.0,
+        "avg_buy_return": 0.0,
+        "avg_max_drawdown": 0.0,
+        "user_feedback_count": 0,
+        "top_failure_reasons": [],
+        "top_success_reasons": [],
+        "strategy_insights": {
+            "status": "collecting",
+            "message": "EdgeOne 轻后端只提供只读占位摘要；真实学习库请使用 Vercel/Docker 后端或后续 worker。",
+            "recommendations": [],
+        },
+        "recent_records": [],
+        "updated_at": None,
+    }
 
 
-@app.api_route("/{full_path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"])
-def unavailable(full_path: str):
-    raise HTTPException(
-        status_code=503,
-        detail=(
-            "EdgeOne 当前部署为轻后端：支持配置、用户设置、学习库和公众号知识。"
-            "盘后扫描、实时行情和财务采集请使用 Vercel/Docker 后端或后续独立采集 worker。"
-        ),
-    )
+def strategy_optimization() -> dict[str, object]:
+    return {
+        "target_win_rate": 80.0,
+        "current_metrics": {
+            "total_cases": 0,
+            "buy_cases": 0,
+            "buy_win_rate": 0.0,
+            "avg_buy_return": 0.0,
+            "avg_max_drawdown": 0.0,
+            "top_failure_reasons": [],
+        },
+        "current_strategy": asdict(STRATEGY),
+        "proposed_strategy": asdict(STRATEGY),
+        "parameter_changes": [],
+        "experiment_plan": [],
+        "disclaimer": "EdgeOne 轻后端只提供只读占位建议；策略进化以数据库和真实回测样本为准。",
+        "experiment": {},
+        "experiment_history": [],
+    }

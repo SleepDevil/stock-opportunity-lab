@@ -28,9 +28,9 @@
 - `vercel.json`：执行 `npm --prefix frontend ci && npm --prefix frontend run build`，并把所有请求重写到 `server.py`。
 - `.vercelignore`：排除 `.venv`、`node_modules`、`data`、`artifacts` 等无需上传的本地文件。
 - `edgeone.json`：EdgeOne Pages 构建配置，安装前端依赖、执行 `node scripts/build-edgeone.mjs`、输出 `frontend/dist`，并把 Python Cloud Functions 部署到上海/香港。
-- `cloud-functions/api/[[default]].py`：EdgeOne 轻后端 FastAPI 入口。它直接提供健康检查、配置、用户设置、学习库、策略实验和公众号知识；盘后扫描、实时行情和财务采集保留给 Vercel/Docker 或后续独立 worker。
-- `cloud-functions/requirements.txt`：EdgeOne Python Runtime 安装 FastAPI、pandas、psycopg 等轻后端依赖。为满足 EdgeOne 单函数包 128 MiB 限制，这里不安装 AkShare/curl-cffi；实时行情采集继续使用 Vercel/Docker 路线或后续独立 worker。
-- `scripts/build-edgeone.mjs`：把轻后端需要的 `backend/app` 辅助模块复制到 `cloud-functions/backend/app`，并构建 Vite 前端。生成目录已被 `.gitignore` 排除。
+- `cloud-functions/api/[[default]].py`：EdgeOne 轻后端 HTTP 入口。它直接提供健康检查、配置和只读学习摘要；盘后扫描、实时行情、财务采集、用户设置写入和公众号写入保留给 Vercel/Docker 或后续独立 worker。
+- `cloud-functions/requirements.txt`：EdgeOne Python Runtime 轻部署不安装第三方 Python 依赖，避免触发包体积限制。
+- `scripts/build-edgeone.mjs`：构建 Vite 前端，静态产物输出到 `frontend/dist`。
 - `STOCK_LAB_DATABASE_URL`：线上策略学习库连接串，建议指向 Neon Postgres。
 - `STOCK_LAB_DATA_DIR`：行情缓存和报告目录。Vercel 默认使用 `/tmp/stock-opportunity-lab`；EdgeOne 适配入口也会默认设置为 `/tmp/stock-opportunity-lab`。
 - `STOCK_LAB_FEISHU_APP_SECRET`：飞书机器人应用密钥，用于后端直接调用飞书 OpenAPI 发送通知。
@@ -96,7 +96,7 @@ https://<EdgeOne 默认域名>/api/config
 https://<EdgeOne 默认域名>/
 ```
 
-EdgeOne Cloud Functions 当前 Python 运行时是 3.10，单函数包大小限制为 128 MB，单次请求最长 120 秒。EdgeOne 版本不打包 AkShare/curl-cffi，适合承载前端、健康检查、配置、用户设置、学习库和公众号知识等数据库能力；盘后全市场扫描、实时行情采集、财务报表抓取等 AkShare 重采集能力继续使用 Vercel/Docker 路线，后续应拆到独立 worker。EdgeOne 官方配置文档说明静态 rewrite 不支持 SPA 前端路由重写，所以默认域下请从 `/` 进入应用，直接刷新 `/backtest`、`/settings` 这类深链接不作为 EdgeOne 轻部署验收项。
+EdgeOne Cloud Functions 当前 Python 运行时是 3.10，单函数包大小限制为 128 MB，单次请求最长 120 秒。EdgeOne 版本不打包第三方 Python 依赖，适合承载前端、健康检查和配置等轻能力；盘后全市场扫描、实时行情采集、财务报表抓取、用户设置写入和公众号知识写入继续使用 Vercel/Docker 路线，后续应拆到独立 worker。EdgeOne 官方配置文档说明静态 rewrite 不支持 SPA 前端路由重写，所以默认域下请从 `/` 进入应用，直接刷新 `/backtest`、`/settings` 这类深链接不作为 EdgeOne 轻部署验收项。
 
 ### 3. 准备 Vercel 登录
 
