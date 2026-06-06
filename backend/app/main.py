@@ -3,18 +3,25 @@ from __future__ import annotations
 from datetime import date
 import hashlib
 import json
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 from app.config import CONFIG
 from app.models import (
     ApiMessage,
     BacktestRequest,
     BacktestResponse,
+    EvolutionCycleRequest,
+    EvolutionCycleResponse,
     IntradayAlertsRequest,
     IntradayAlertsResponse,
     IntradayResponse,
+    LearningFeedbackRequest,
+    LearningFeedbackResponse,
+    LearningSummary,
     NotificationSettings,
     NotificationSettingsUpdate,
     ScreenRequest,
@@ -28,19 +35,34 @@ from app.models import (
     StockFinancialsResponse,
     StockIntelligenceResponse,
     StockSearchResponse,
+    StrategyOptimizationResponse,
+    WechatArticleIngestRequest,
+    WechatArticleResponse,
+    WechatKnowledgeResponse,
+    WechatSubscriptionRequest,
+    WechatSubscriptionResponse,
 )
 from app.services.ai import build_payload, explain
 from app.services.backtest import run_backtest
 from app.services.data_provider import AkShareProvider
+from app.services.evolution import run_evolution_cycle
 from app.services.financials import AkShareFinancialProvider, run_stock_financials
 from app.services.intraday_alerts import run_intraday_alerts
+from app.services.learning import append_user_feedback, load_learning_summary
 from app.services.notification_settings import load_notification_settings, save_notification_settings
 from app.services.notifications import send_feishu_tip
 from app.services.screener import latest_screen_date, load_screen_report, load_screen_targets, run_screen
 from app.services.sector_flow import run_sector_flow
 from app.services.stock_analysis import run_stock_analysis, run_stock_search
 from app.services.stock_intelligence import AkShareStockIntelligenceProvider, run_stock_intelligence
+from app.services.strategy_optimizer import build_strategy_optimization
 from app.services.task_manager import TaskManager, TaskRecord
+from app.services.wechat_knowledge import (
+    create_wechat_subscription as save_wechat_subscription,
+    ingest_wechat_article,
+    list_wechat_articles,
+    list_wechat_subscriptions,
+)
 from app.utils import display_date, json_records, normalize_trade_date
 
 
@@ -141,7 +163,8 @@ def screen_report(date: str) -> ScreenResponse:
         candidates = load_screen_report(CONFIG, trade_date)
         targets = load_screen_targets(CONFIG, trade_date)
         raw_count = load_raw_count(trade_date)
-        payload = build_payload(CONFIG, trade_date, candidates)
+        learning_summary = load_learning_summary(CONFIG)
+        payload = build_payload(CONFIG, trade_date, candidates, learning_summary=learning_summary)
         return ScreenResponse(
             trade_date=trade_date,
             raw_count=raw_count,
@@ -186,6 +209,7 @@ def backtest(request: BacktestRequest) -> BacktestResponse:
             actual_date=result.actual_date,
             backtest_rows=result.rows,
             backtest_summary=result.summary,
+            learning_summary=result.learning_summary,
         )
         analysis = explain(payload)
         return BacktestResponse(
@@ -193,6 +217,7 @@ def backtest(request: BacktestRequest) -> BacktestResponse:
             actual_date=result.actual_date,
             rows=json_records(result.rows),
             summary=result.summary,
+            learning_summary=result.learning_summary,
             report_paths=result.report_paths,
             ai_payload=payload,
             analysis=analysis,
@@ -258,6 +283,111 @@ def stock_intelligence(symbol: str, date: str | None = None, refresh: bool = Fal
             refresh=refresh,
         )
         return StockIntelligenceResponse(**result)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/wechat-knowledge", response_model=WechatKnowledgeResponse)
+def wechat_knowledge() -> WechatKnowledgeResponse:
+    return WechatKnowledgeResponse(
+        subscriptions=list_wechat_subscriptions(CONFIG),
+        articles=list_wechat_articles(CONFIG),
+        capability_note="微信没有稳定公开接口可订阅任意公众号全部历史消息；当前支持手动导入文章 URL，或为合规 RSS/feed 预留 feed_url。",
+    )
+
+
+@app.post("/api/wechat-subscriptions", response_model=WechatSubscriptionResponse)
+def create_wechat_subscription(request: WechatSubscriptionRequest) -> WechatSubscriptionResponse:
+    try:
+        result = save_wechat_subscription(
+            CONFIG,
+            source_name=request.source_name,
+            sample_url=request.sample_url,
+            feed_url=request.feed_url,
+        )
+        return WechatSubscriptionResponse(**result)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/wechat-articles", response_model=WechatArticleResponse)
+def ingest_wechat_article_api(request: WechatArticleIngestRequest) -> WechatArticleResponse:
+    try:
+        result = ingest_wechat_article(
+            CONFIG,
+            source_name=request.source_name,
+            article_url=request.article_url,
+            html=request.html,
+        )
+        return WechatArticleResponse(**result)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/learning-summary", response_model=LearningSummary)
+def learning_summary() -> LearningSummary:
+    return LearningSummary(**load_learning_summary(CONFIG))
+
+
+@app.post("/api/learning-feedback", response_model=LearningFeedbackResponse)
+def learning_feedback(request: LearningFeedbackRequest) -> LearningFeedbackResponse:
+    try:
+        result = append_user_feedback(
+            CONFIG,
+            screen_date=request.screen_date,
+            actual_date=request.actual_date,
+            code=request.code,
+            note=request.note,
+            author=request.author,
+        )
+        return LearningFeedbackResponse(**result)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/strategy-optimization", response_model=StrategyOptimizationResponse)
+def strategy_optimization() -> StrategyOptimizationResponse:
+    return StrategyOptimizationResponse(**build_strategy_optimization(CONFIG))
+
+
+@app.post("/api/evolution-cycle", response_model=EvolutionCycleResponse)
+def evolution_cycle(request: EvolutionCycleRequest) -> EvolutionCycleResponse:
+    try:
+        result = run_evolution_cycle(
+            provider=provider(),
+            config=CONFIG,
+            actual_date=request.actual_date,
+            screen_date=request.screen_date,
+            refresh=request.refresh,
+            exclude_boards=request.exclude_boards,
+        )
+        payload = build_payload(
+            CONFIG,
+            result.screen_date,
+            result.backtest.rows,
+            actual_date=result.actual_date,
+            backtest_rows=result.backtest.rows,
+            backtest_summary=result.backtest.summary,
+            learning_summary=result.learning_summary,
+        )
+        return EvolutionCycleResponse(
+            status="completed",
+            screen_date=result.screen_date,
+            actual_date=result.actual_date,
+            backtest=BacktestResponse(
+                screen_date=result.screen_date,
+                actual_date=result.actual_date,
+                rows=json_records(result.backtest.rows),
+                summary=result.backtest.summary,
+                learning_summary=result.learning_summary,
+                report_paths=result.backtest.report_paths,
+                ai_payload=payload,
+                analysis=explain(payload),
+            ),
+            learning_summary=LearningSummary(**result.learning_summary),
+            strategy_optimization=StrategyOptimizationResponse(**result.strategy_optimization),
+            message=result.message,
+        )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -329,7 +459,8 @@ def daily(request: ScreenRequest):
                 actual_date=trade_date,
                 refresh=request.refresh,
             )
-        payload = build_payload(CONFIG, screen_result.trade_date, screen_result.candidates)
+        learning_summary = load_learning_summary(CONFIG)
+        payload = build_payload(CONFIG, screen_result.trade_date, screen_result.candidates, learning_summary=learning_summary)
         return {
             "screen": {
                 "trade_date": screen_result.trade_date,
@@ -350,6 +481,7 @@ def daily(request: ScreenRequest):
                 "actual_date": backtest_result.actual_date,
                 "rows": json_records(backtest_result.rows),
                 "summary": backtest_result.summary,
+                "learning_summary": backtest_result.learning_summary,
                 "report_paths": backtest_result.report_paths,
                 "analysis": explain(
                     build_payload(
@@ -359,6 +491,7 @@ def daily(request: ScreenRequest):
                         actual_date=backtest_result.actual_date,
                         backtest_rows=backtest_result.rows,
                         backtest_summary=backtest_result.summary,
+                        learning_summary=backtest_result.learning_summary,
                     )
                 ),
             },
@@ -416,7 +549,8 @@ def run_screen_response(request: ScreenRequest, trade_date: str) -> ScreenRespon
         enrich=request.enrich,
         exclude_boards=request.exclude_boards,
     )
-    payload = build_payload(CONFIG, result.trade_date, result.candidates)
+    learning_summary = load_learning_summary(CONFIG)
+    payload = build_payload(CONFIG, result.trade_date, result.candidates, learning_summary=learning_summary)
     analysis = explain(payload)
     return ScreenResponse(
         trade_date=result.trade_date,
@@ -466,3 +600,26 @@ def notify_screen_task(record: TaskRecord) -> None:
     else:
         msg = f"Stock Opportunity Lab：{display_date(record.trade_date)} 盘后扫描失败：{record.error or record.message}"
     send_feishu_tip(msg, record.notification_email)
+
+
+def frontend_response_path(full_path: str, dist_dir: Path | None = None) -> Path | None:
+    dist = dist_dir or CONFIG.project_root / "frontend" / "dist"
+    if full_path.startswith("api/"):
+        return None
+    index = dist / "index.html"
+    target = (dist / full_path).resolve()
+    try:
+        inside_dist = target.is_relative_to(dist.resolve())
+    except ValueError:
+        inside_dist = False
+    if inside_dist and target.is_file():
+        return target
+    return index if index.exists() else None
+
+
+@app.get("/{full_path:path}", include_in_schema=False)
+def serve_frontend(full_path: str = ""):
+    path = frontend_response_path(full_path)
+    if path is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    return FileResponse(path)

@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from dataclasses import fields
 import json
 from typing import Any
 
 import pandas as pd
 
-from app.config import AppConfig
+from app.config import AppConfig, StrategyConfig
 from app.services.data_provider import MarketDataProvider
+from app.services.learning import persist_backtest_learning
+from app.services.learning_store import list_strategy_experiments, record_strategy_experiment_outcomes
 from app.services.screener import load_screen_report, markdown_table, run_screen
-from app.services.strategy import simulate_next_day_entry
+from app.services.strategy import attach_buy_plan, simulate_next_day_entry
 from app.utils import json_records, normalize_trade_date
 
 
@@ -19,6 +22,7 @@ class BacktestRun:
     actual_date: str
     rows: pd.DataFrame
     summary: dict[str, Any]
+    learning_summary: dict[str, Any]
     report_paths: dict[str, str]
 
 
@@ -63,8 +67,10 @@ def run_backtest(
         rows.append(row)
     df = pd.DataFrame(rows)
     summary = summarize(df)
+    learning_summary = persist_backtest_learning(config, screen, actual, df, summary)
+    persist_strategy_experiment_outcomes(config, screen, actual, df, summary)
     report_paths = persist_backtest(config, screen, actual, df, summary)
-    return BacktestRun(screen, actual, df, summary, report_paths)
+    return BacktestRun(screen, actual, df, summary, learning_summary, report_paths)
 
 
 def pick_actual_row(history: pd.DataFrame, actual_date: str) -> pd.Series | None:
@@ -154,6 +160,64 @@ def summarize(df: pd.DataFrame) -> dict[str, Any]:
         }
     )
     return summary
+
+
+def persist_strategy_experiment_outcomes(
+    config: AppConfig,
+    screen_date: str,
+    actual_date: str,
+    baseline_rows: pd.DataFrame,
+    baseline_summary: dict[str, Any],
+) -> None:
+    for experiment in list_strategy_experiments(config):
+        if experiment.get("status") != "paper" or not experiment.get("parameter_changes"):
+            continue
+        proposed_rows = replay_rows_with_strategy(baseline_rows, experiment.get("proposed_strategy") or {})
+        proposed_summary = summarize(proposed_rows)
+        record_strategy_experiment_outcomes(
+            config,
+            experiment_id=experiment["id"],
+            screen_date=screen_date,
+            actual_date=actual_date,
+            baseline_summary=baseline_summary,
+            proposed_summary=proposed_summary,
+        )
+
+
+def replay_rows_with_strategy(rows: pd.DataFrame, strategy_values: dict[str, Any]) -> pd.DataFrame:
+    if rows.empty:
+        return rows.copy()
+    proposed = attach_buy_plan(rows.copy(), strategy_config_from_dict(strategy_values))
+    replayed: list[dict[str, Any]] = []
+    for _, candidate in proposed.iterrows():
+        row = candidate.to_dict()
+        actual = actual_series_from_backtest_row(candidate)
+        if actual is None:
+            row.update(no_entry("缺少实际交易日行情"))
+        else:
+            row.update(simulate_next_day_entry(candidate, actual))
+            row.update(risk_columns(candidate, actual))
+        replayed.append(row)
+    return pd.DataFrame(replayed)
+
+
+def strategy_config_from_dict(values: dict[str, Any]) -> StrategyConfig:
+    allowed = {field.name for field in fields(StrategyConfig)}
+    defaults = StrategyConfig().__dict__
+    data = {key: values.get(key, defaults[key]) for key in allowed}
+    return StrategyConfig(**data)
+
+
+def actual_series_from_backtest_row(row: pd.Series) -> pd.Series | None:
+    required = {
+        "开盘": row.get("实际开盘"),
+        "最高": row.get("实际最高"),
+        "最低": row.get("实际最低"),
+        "收盘": row.get("实际收盘"),
+    }
+    if any(pd.isna(value) for value in required.values()):
+        return None
+    return pd.Series(required)
 
 
 def pick_summary_row(row: pd.Series | None) -> dict[str, Any] | None:

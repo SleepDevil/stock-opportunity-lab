@@ -1,8 +1,13 @@
 import type {
   AppConfig,
   BacktestResponse,
+  EvolutionCycleRequest,
+  EvolutionCycleResponse,
   IntradayAlertsResponse,
   IntradayResponse,
+  LearningFeedbackRequest,
+  LearningFeedbackResponse,
+  LearningSummary,
   NotificationSettings,
   SectorFlowResponse,
   SectorScope,
@@ -13,7 +18,13 @@ import type {
   StockFinancialsResponse,
   StockIntelligenceResponse,
   StockSearchResponse,
-  TaskStatusResponse
+  StrategyOptimizationResponse,
+  TaskStatusResponse,
+  WechatArticle,
+  WechatArticleIngestRequest,
+  WechatKnowledgeResponse,
+  WechatSubscription,
+  WechatSubscriptionRequest
 } from '../types/api';
 
 const headers = { 'Content-Type': 'application/json' };
@@ -72,6 +83,50 @@ export function runBacktest(input: {
   exclude_boards?: string[];
 }): Promise<BacktestResponse> {
   return request<BacktestResponse>('/api/backtest', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(input)
+  });
+}
+
+export function fetchLearningSummary(): Promise<LearningSummary> {
+  return request<LearningSummary>('/api/learning-summary');
+}
+
+export function fetchWechatKnowledge(): Promise<WechatKnowledgeResponse> {
+  return request<WechatKnowledgeResponse>('/api/wechat-knowledge');
+}
+
+export function saveWechatSubscription(input: WechatSubscriptionRequest): Promise<WechatSubscription> {
+  return request<WechatSubscription>('/api/wechat-subscriptions', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(input)
+  });
+}
+
+export function ingestWechatArticle(input: WechatArticleIngestRequest): Promise<WechatArticle> {
+  return request<WechatArticle>('/api/wechat-articles', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(input)
+  });
+}
+
+export function fetchStrategyOptimization(): Promise<StrategyOptimizationResponse> {
+  return request<StrategyOptimizationResponse>('/api/strategy-optimization');
+}
+
+export function runEvolutionCycle(input: EvolutionCycleRequest): Promise<EvolutionCycleResponse> {
+  return request<EvolutionCycleResponse>('/api/evolution-cycle', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(input)
+  });
+}
+
+export function submitLearningFeedback(input: LearningFeedbackRequest): Promise<LearningFeedbackResponse> {
+  return request<LearningFeedbackResponse>('/api/learning-feedback', {
     method: 'POST',
     headers,
     body: JSON.stringify(input)

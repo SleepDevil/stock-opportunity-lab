@@ -14,12 +14,15 @@ import {
   Progress,
   ScrollArea,
   SegmentedControl,
+  Select,
+  Skeleton,
   SimpleGrid,
   Stack,
   Switch,
   Tabs,
   Table,
   Text,
+  Textarea,
   TextInput,
   ThemeIcon,
   Title,
@@ -27,7 +30,7 @@ import {
 } from '@mantine/core';
 import { DatePickerInput } from '@mantine/dates';
 import { notifications } from '@mantine/notifications';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Link,
   Outlet,
@@ -69,19 +72,26 @@ import {
   fetchConfig,
   fetchIntraday,
   fetchIntradayAlerts,
+  fetchLearningSummary,
   fetchNotificationSettings,
   fetchSectorFlow,
   fetchScreenReport,
   fetchScreenReports,
   fetchStockFinancials,
   fetchStockIntelligence,
+  fetchStrategyOptimization,
   fetchStockSearch,
+  fetchWechatKnowledge,
+  ingestWechatArticle,
   fetchTask,
   runBacktest,
+  runEvolutionCycle,
   runScreen,
   runStockAnalysis,
   saveNotificationSettings,
-  sendTestNotification
+  saveWechatSubscription,
+  sendTestNotification,
+  submitLearningFeedback
 } from './lib/api';
 import { classForSigned, displayTradeDate, formatMoney, formatNumber, formatPct, todayInputValue, toTradeDate } from './lib/format';
 import type {
@@ -90,6 +100,7 @@ import type {
   Candidate,
   IntradayAlert,
   IntradayPoint,
+  LearningSummary,
   SectorAggregateRow,
   SectorFlowResponse,
   SectorScope,
@@ -100,8 +111,11 @@ import type {
   StockFinancialsResponse,
   StockIntelligenceResponse,
   StockSearchItem,
+  StrategyOptimizationResponse,
   TaskStatusResponse,
-  TrendPoint
+  TrendPoint,
+  WechatArticle,
+  WechatKnowledgeResponse
 } from './types/api';
 import './styles.css';
 
@@ -150,8 +164,10 @@ type AppState = {
   handleScreen: () => void;
   runScreenWithOptions: (options?: { date?: string; refresh?: boolean; limit?: number; enrich?: boolean }) => void;
   handleBacktest: () => void;
+  handleEvolutionCycle: () => void;
   screenLoading: boolean;
   backtestLoading: boolean;
+  evolutionLoading: boolean;
   configLoading: boolean;
   taskError: string;
 };
@@ -295,6 +311,7 @@ function isScreenResponse(value: unknown): value is ScreenResponse {
 
 function AppShell() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const pathname = useRouterState({ select: (state) => state.location.pathname }) as AppRoutePath;
   const page = pageMeta[pathname] ?? pageMeta['/'];
   const isSettingsRoute = pathname === '/settings';
@@ -350,7 +367,26 @@ function AppShell() {
 
   const backtestMutation = useMutation({
     mutationFn: runBacktest,
-    onSuccess: setBacktest
+    onSuccess: (result) => {
+      setBacktest(result);
+      queryClient.setQueryData(['learning-summary'], result.learning_summary);
+    }
+  });
+
+  const evolutionMutation = useMutation({
+    mutationFn: runEvolutionCycle,
+    onSuccess: (result) => {
+      setBacktest(result.backtest);
+      setScreenDate(displayTradeDate(result.screen_date));
+      setActualDate(displayTradeDate(result.actual_date));
+      queryClient.setQueryData(['learning-summary'], result.learning_summary);
+      queryClient.setQueryData(['strategy-optimization'], result.strategy_optimization);
+      notifications.show({
+        color: 'teal',
+        title: '自我复盘已完成',
+        message: result.message
+      });
+    }
   });
 
   useEffect(() => {
@@ -452,6 +488,14 @@ function AppShell() {
     });
   }
 
+  function handleEvolutionCycle() {
+    evolutionMutation.mutate({
+      actual_date: toTradeDate(actualDate),
+      refresh,
+      exclude_boards: effectiveExcludedBoards
+    });
+  }
+
   function applyScreenResult(result: ScreenResponse, inputDate: string) {
     setScreen(result);
     writeLastScreen(result);
@@ -471,7 +515,8 @@ function AppShell() {
   const taskError = [
     configQuery.error instanceof Error ? configQuery.error.message : '',
     screenMutation.error instanceof Error ? screenMutation.error.message : '',
-    backtestMutation.error instanceof Error ? backtestMutation.error.message : ''
+    backtestMutation.error instanceof Error ? backtestMutation.error.message : '',
+    evolutionMutation.error instanceof Error ? evolutionMutation.error.message : ''
   ].filter(Boolean)[0] ?? '';
 
   const state = {
@@ -503,8 +548,10 @@ function AppShell() {
     handleScreen,
     runScreenWithOptions,
     handleBacktest,
+    handleEvolutionCycle,
     screenLoading: screenMutation.isPending,
     backtestLoading: backtestMutation.isPending,
+    evolutionLoading: evolutionMutation.isPending,
     configLoading: configQuery.isPending,
     taskError
   } satisfies AppState;
@@ -1451,10 +1498,17 @@ function BacktestPage() {
     refresh,
     backtest,
     backtestLoading,
+    evolutionLoading,
     screenLoading,
     handleBacktest,
+    handleEvolutionCycle,
     taskError
   } = useAppState();
+  const learningQuery = useQuery({
+    queryKey: ['learning-summary'],
+    queryFn: fetchLearningSummary
+  });
+  const learning = learningQuery.data ?? backtest?.learning_summary;
 
   return (
     <>
@@ -1491,7 +1545,7 @@ function BacktestPage() {
           </SimpleGrid>
           <Group mt="md" justify="space-between">
             <Text size="xs" c="dimmed">建议在次日收盘后执行，自动生成时会沿用当前板块排除设置。</Text>
-            <Button color="dark" variant="filled" leftSection={<Target size={16} />} onClick={handleBacktest} loading={backtestLoading} disabled={screenLoading}>
+            <Button color="dark" variant="filled" leftSection={<Target size={16} />} onClick={handleBacktest} loading={backtestLoading} disabled={screenLoading || evolutionLoading}>
               运行回测
             </Button>
           </Group>
@@ -1531,10 +1585,21 @@ function BacktestPage() {
       <Tabs defaultValue="analysis" className="evidence-tabs" keepMounted={false}>
         <Tabs.List>
           <Tabs.Tab value="analysis" leftSection={<Activity size={15} />}>回测解释</Tabs.Tab>
+          <Tabs.Tab value="learning" leftSection={<Workflow size={15} />}>策略进化</Tabs.Tab>
           <Tabs.Tab value="reports" leftSection={<DatabaseZap size={15} />}>本地报告</Tabs.Tab>
         </Tabs.List>
         <Tabs.Panel value="analysis" pt="md">
           <AnalysisPanel text={backtest?.analysis} payload={backtest?.ai_payload} />
+        </Tabs.Panel>
+        <Tabs.Panel value="learning" pt="md">
+          <LearningPanel
+            actualDate={actualDate}
+            backtest={backtest}
+            learning={learning}
+            loading={learningQuery.isPending}
+            evolutionLoading={evolutionLoading}
+            onRunEvolution={handleEvolutionCycle}
+          />
         </Tabs.Panel>
         <Tabs.Panel value="reports" pt="md">
           <ReportsPanel />
@@ -1542,6 +1607,454 @@ function BacktestPage() {
       </Tabs>
     </>
   );
+}
+
+function LearningPanel({
+  actualDate,
+  backtest,
+  learning,
+  loading,
+  evolutionLoading,
+  onRunEvolution
+}: {
+  actualDate: string;
+  backtest?: BacktestResponse;
+  learning?: LearningSummary;
+  loading?: boolean;
+  evolutionLoading?: boolean;
+  onRunEvolution: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const optimizationQuery = useQuery({
+    queryKey: ['strategy-optimization'],
+    queryFn: fetchStrategyOptimization
+  });
+  const [selectedCode, setSelectedCode] = useState<string | null>(backtest?.rows[0]?.代码 ?? null);
+  const [note, setNote] = useState('');
+
+  useEffect(() => {
+    if (!backtest?.rows.length) {
+      setSelectedCode(null);
+      return;
+    }
+    setSelectedCode((current) => (current && backtest.rows.some((row) => row.代码 === current) ? current : backtest.rows[0].代码));
+  }, [backtest?.screen_date, backtest?.actual_date, backtest?.rows]);
+
+  const feedbackMutation = useMutation({
+    mutationFn: submitLearningFeedback,
+    onSuccess: (result) => {
+      queryClient.setQueryData(['learning-summary'], result.summary);
+      void queryClient.invalidateQueries({ queryKey: ['strategy-optimization'] });
+      notifications.show({
+        color: 'teal',
+        title: '反馈已写入策略记忆',
+        message: `${result.record.name} ${result.record.code} 的复盘会进入后续分析。`
+      });
+      setNote('');
+    }
+  });
+
+  const selectedRow = backtest?.rows.find((row) => row.代码 === selectedCode);
+  const feedbackOptions = (backtest?.rows ?? []).map((row) => ({
+    value: row.代码,
+    label: `${row.名称} ${row.代码} · ${row.买入方式 || '待复盘'}`
+  }));
+  const canSubmit = Boolean(backtest && selectedCode && note.trim());
+  const insights = learning?.strategy_insights;
+  const optimization = optimizationQuery.data;
+
+  function submitFeedback() {
+    if (!backtest || !selectedCode || !note.trim()) {
+      return;
+    }
+    feedbackMutation.mutate({
+      screen_date: backtest.screen_date,
+      actual_date: backtest.actual_date,
+      code: selectedCode,
+      note: note.trim(),
+      author: 'user'
+    });
+  }
+
+  if (loading && !learning) {
+    return (
+      <Stack gap="sm">
+        <Skeleton height={110} radius="md" />
+        <Skeleton height={180} radius="md" />
+      </Stack>
+    );
+  }
+
+  return (
+    <Stack gap="md">
+      <Paper className="learning-panel" withBorder>
+        <Group justify="space-between" align="center">
+          <div>
+            <Text fw={900}>自我复盘周期</Text>
+            <Text size="xs" c="dimmed">最近盘后报告 {'->'} {displayTradeDate(toTradeDate(actualDate))}</Text>
+          </div>
+          <Button
+            color="dark"
+            leftSection={<Workflow size={15} />}
+            loading={evolutionLoading}
+            onClick={onRunEvolution}
+          >
+            运行自我复盘
+          </Button>
+        </Group>
+      </Paper>
+
+      <SimpleGrid cols={{ base: 1, lg: 2 }} spacing="md">
+        <Paper className="learning-panel" withBorder>
+          <Group justify="space-between" align="flex-start" mb="md">
+            <div>
+              <Text fw={900}>策略记忆</Text>
+              <Text size="xs" c="dimmed">
+                {learning?.updated_at ? `最近更新 ${new Date(learning.updated_at).toLocaleString()}` : '等待回测样本'}
+              </Text>
+            </div>
+            <ThemeIcon variant="light" color="teal"><Workflow size={18} /></ThemeIcon>
+          </Group>
+          <SimpleGrid cols={{ base: 2, sm: 4 }} spacing="sm">
+            <StatusTile label="验证样本" value={`${learning?.total_cases ?? 0} 条`} />
+            <StatusTile label="买入样本" value={`${learning?.buy_cases ?? 0} 条`} />
+            <StatusTile label="买入胜率" value={formatPct(learning?.buy_win_rate)} />
+            <StatusTile label="平均收益" value={formatPct(learning?.avg_buy_return)} />
+          </SimpleGrid>
+          <div className="learning-target">
+            <Group justify="space-between" align="center">
+              <Text size="xs" c="dimmed" fw={900}>80% 胜率目标</Text>
+              <Badge color={insights?.win_rate_gap ? 'orange' : 'teal'} variant="light">
+                {insights ? `差距 ${formatPct(insights.win_rate_gap)}` : '等待样本'}
+              </Badge>
+            </Group>
+            <Text size="sm" mt={8}>{insights?.sample_status ?? '样本不足'}</Text>
+          </div>
+          <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm" mt="md">
+            <LearningReasonList title="成功归因" reasons={learning?.top_success_reasons ?? []} tone="success" />
+            <LearningReasonList title="失败/未触发" reasons={learning?.top_failure_reasons ?? []} tone="failure" />
+          </SimpleGrid>
+        </Paper>
+
+        <Paper className="learning-panel" withBorder>
+          <Group justify="space-between" align="flex-start" mb="md">
+            <div>
+              <Text fw={900}>人工复盘</Text>
+              <Text size="xs" c="dimmed">{selectedRow ? `${selectedRow.名称} · ${selectedRow.买入方式}` : '运行回测后可写入样本备注'}</Text>
+            </div>
+            <ThemeIcon variant="light" color="orange"><Send size={18} /></ThemeIcon>
+          </Group>
+          <Stack gap="sm">
+            <Select
+              label="回测样本"
+              data={feedbackOptions}
+              value={selectedCode}
+              onChange={setSelectedCode}
+              disabled={!feedbackOptions.length || feedbackMutation.isPending}
+              searchable
+              nothingFoundMessage="没有样本"
+            />
+            {selectedRow ? (
+              <Group gap="xs">
+                <Badge color={selectedRow.是否买入 ? 'teal' : 'gray'} variant="light">{selectedRow.是否买入 ? '已买入' : '未买入'}</Badge>
+                <Badge color={Number(selectedRow['收盘浮盈%'] ?? 0) > 0 ? 'red' : 'blue'} variant="light">
+                  收盘 {formatPct(selectedRow['收盘浮盈%'])}
+                </Badge>
+                <Badge color={selectedRow.盘中触及止损 ? 'red' : 'gray'} variant="outline">
+                  {selectedRow.盘中触及止损 ? '触及止损' : '未触及止损'}
+                </Badge>
+              </Group>
+            ) : null}
+            <Textarea
+              label="复盘记录"
+              placeholder="记录你认为真正影响结果的原因"
+              minRows={4}
+              autosize
+              value={note}
+              onChange={(event) => setNote(event.currentTarget.value)}
+              disabled={!backtest || feedbackMutation.isPending}
+            />
+            <Group justify="space-between" align="center">
+              <Text size="xs" c="dimmed">已保存人工反馈 {learning?.user_feedback_count ?? 0} 条</Text>
+              <Button
+                color="dark"
+                leftSection={<Send size={15} />}
+                onClick={submitFeedback}
+                disabled={!canSubmit}
+                loading={feedbackMutation.isPending}
+              >
+                写入策略记忆
+              </Button>
+            </Group>
+            {feedbackMutation.error instanceof Error ? (
+              <Alert color="red" variant="light" icon={<ShieldAlert size={16} />}>
+                {feedbackMutation.error.message}
+              </Alert>
+            ) : null}
+          </Stack>
+        </Paper>
+      </SimpleGrid>
+
+      <Paper className="learning-panel" withBorder>
+        <Group justify="space-between" mb="sm">
+          <div>
+            <Text fw={900}>参数实验建议</Text>
+            <Text size="xs" c="dimmed">建议先纸面验证，不自动改写策略参数。</Text>
+          </div>
+          <Badge color="teal" variant="light">{optimization?.parameter_changes.length ?? 0} 项</Badge>
+        </Group>
+        <StrategyOptimizationPanel optimization={optimization} loading={optimizationQuery.isPending} fallbackRecommendations={insights?.recommendations ?? []} />
+      </Paper>
+
+      <Paper className="learning-panel" withBorder>
+        <Group justify="space-between" mb="sm">
+          <Text fw={900}>策略优化建议</Text>
+          <Badge color="teal" variant="light">{insights?.recommendations.length ?? 0} 条</Badge>
+        </Group>
+        <div className="learning-suggestions">
+          {(insights?.recommendations ?? []).length ? (
+            insights?.recommendations.map((item) => (
+              <div className="learning-suggestion" key={item}>{item}</div>
+            ))
+          ) : (
+            <div className="empty-state refined">
+              <Workflow size={20} />
+              <span>积累更多回测和人工复盘后，系统会生成策略优化建议。</span>
+            </div>
+          )}
+        </div>
+      </Paper>
+
+      <Paper className="learning-panel" withBorder>
+        <Group justify="space-between" mb="sm">
+          <Text fw={900}>近期学习样本</Text>
+          <Badge color="blue" variant="light">{learning?.recent_records.length ?? 0} 条</Badge>
+        </Group>
+        <div className="learning-record-list">
+          {(learning?.recent_records ?? []).length ? (
+            learning?.recent_records.slice(0, 6).map((record) => (
+              <div className="learning-record" key={record.id}>
+                <Group justify="space-between" align="flex-start" gap="md">
+                  <div>
+                    <Text fw={900} size="sm">{record.name} <span>{record.code}</span></Text>
+                    <Text size="xs" c="dimmed">
+                      {displayTradeDate(record.screen_date)} {'->'} {displayTradeDate(record.actual_date)} · {record.entry_mode}
+                    </Text>
+                  </div>
+                  <Badge color={learningOutcomeColor(record.outcome)} variant="light">{learningOutcomeLabel(record.outcome)}</Badge>
+                </Group>
+                <Text size="sm" mt={8}>{record.system_attribution || '等待更多归因'}</Text>
+                {record.user_notes?.length ? (
+                  <Text size="xs" c="dimmed" mt={6}>人工：{record.user_notes[record.user_notes.length - 1].note}</Text>
+                ) : null}
+              </div>
+            ))
+          ) : (
+            <div className="empty-state refined">
+              <Workflow size={20} />
+              <span>运行回测后，策略学习样本会出现在这里。</span>
+            </div>
+          )}
+        </div>
+      </Paper>
+    </Stack>
+  );
+}
+
+function StrategyOptimizationPanel({
+  optimization,
+  loading,
+  fallbackRecommendations
+}: {
+  optimization?: StrategyOptimizationResponse;
+  loading?: boolean;
+  fallbackRecommendations: string[];
+}) {
+  if (loading && !optimization) {
+    return (
+      <Stack gap="sm">
+        <Skeleton height={72} radius="md" />
+        <Skeleton height={72} radius="md" />
+      </Stack>
+    );
+  }
+
+  if (!optimization?.parameter_changes.length) {
+    return (
+      <div className="learning-suggestions">
+        {(fallbackRecommendations.length ? fallbackRecommendations : ['当前证据不足，继续积累样本并优先补充亏损样本复盘。']).map((item) => (
+          <div className="learning-suggestion" key={item}>{item}</div>
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <Stack gap="sm">
+      {optimization.experiment?.id ? (
+        <div className="strategy-experiment active">
+          <Group justify="space-between" align="flex-start">
+            <div>
+              <Text fw={900} size="sm">实验版本 {optimization.experiment.id}</Text>
+              <Text size="xs" c="dimmed">
+                创建 {new Date(optimization.experiment.created_at).toLocaleString()} · 更新 {new Date(optimization.experiment.updated_at).toLocaleString()}
+              </Text>
+            </div>
+            <Badge color={optimization.experiment.status === 'paper' ? 'blue' : 'gray'} variant="light">
+              {strategyStatusLabel(optimization.experiment.status)}
+            </Badge>
+          </Group>
+          {optimization.experiment.outcomes?.length ? (
+            <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs" mt="sm">
+              {optimization.experiment.outcomes.slice(0, 4).map((outcome) => (
+                <div className="strategy-outcome" key={outcome.id}>
+                  <Group justify="space-between" gap="xs">
+                    <Text fw={800} size="xs">{strategyVariantLabel(outcome.variant)}</Text>
+                    <Badge color={outcome.variant === 'proposed' ? 'teal' : 'gray'} variant="light">
+                      {displayTradeDate(outcome.screen_date)} {'->'} {displayTradeDate(outcome.actual_date)}
+                    </Badge>
+                  </Group>
+                  <Group gap="xs" mt={8}>
+                    <Badge color="blue" variant="outline">胜率 {formatPct(outcome.buy_win_rate)}</Badge>
+                    <Badge color={outcome.avg_close_return >= 0 ? 'teal' : 'red'} variant="light">
+                      均收 {formatPct(outcome.avg_close_return)}
+                    </Badge>
+                    <Badge color="orange" variant="light">回撤 {formatPct(outcome.avg_max_drawdown)}</Badge>
+                  </Group>
+                </div>
+              ))}
+            </SimpleGrid>
+          ) : (
+            <Text size="xs" c="dimmed" mt={8}>后续运行回测后，会在这里沉淀 baseline/proposed 的真实表现对照。</Text>
+          )}
+        </div>
+      ) : null}
+      {optimization.parameter_changes.map((change) => (
+        <div className="strategy-change" key={change.parameter}>
+          <Group justify="space-between" align="flex-start">
+            <div>
+              <Text fw={900} size="sm">{strategyParameterLabel(change.parameter)}</Text>
+              <Text size="xs" c="dimmed">{change.reason}</Text>
+            </div>
+            <Badge color={change.confidence === 'high' ? 'teal' : change.confidence === 'medium' ? 'blue' : 'orange'} variant="light">
+              {strategyConfidenceLabel(change.confidence)}
+            </Badge>
+          </Group>
+          <Group gap="xs" mt="sm">
+            <Badge color="gray" variant="outline">当前 {formatStrategyNumber(change.parameter, change.current)}</Badge>
+            <Badge color={change.direction === 'down' ? 'orange' : 'teal'} variant="light">
+              建议 {formatStrategyNumber(change.parameter, change.proposed)}
+            </Badge>
+          </Group>
+        </div>
+      ))}
+      <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
+        {optimization.experiment_plan.map((item) => (
+          <div className="strategy-experiment" key={item.name}>
+            <Group justify="space-between">
+              <Text fw={900} size="sm">{item.name}</Text>
+              <Badge color={item.status === 'paper' ? 'blue' : 'gray'} variant="light">{strategyStatusLabel(item.status)}</Badge>
+            </Group>
+            <Text size="xs" c="dimmed" mt={6}>{item.metric}</Text>
+            <Text size="sm" mt={8}>{item.notes}</Text>
+          </div>
+        ))}
+      </SimpleGrid>
+      {optimization.experiment_history?.length > 1 ? (
+        <div className="strategy-experiment">
+          <Text fw={900} size="sm" mb={8}>历史实验链</Text>
+          <Stack gap={6}>
+            {optimization.experiment_history.slice(1, 4).map((experiment) => (
+              <Group key={experiment.id} justify="space-between" gap="sm">
+                <Text size="xs" c="dimmed">{experiment.id}</Text>
+                <Badge color="gray" variant="outline">{experiment.outcomes?.length ?? 0} 个结果</Badge>
+              </Group>
+            ))}
+          </Stack>
+        </div>
+      ) : null}
+      <Text size="xs" c="dimmed">{optimization.disclaimer}</Text>
+    </Stack>
+  );
+}
+
+function strategyVariantLabel(variant: string) {
+  if (variant === 'baseline') return '当前参数';
+  if (variant === 'proposed') return '建议参数';
+  return variant;
+}
+
+function LearningReasonList({
+  title,
+  reasons,
+  tone
+}: {
+  title: string;
+  reasons: Array<{ reason: string; count: number }>;
+  tone: 'success' | 'failure';
+}) {
+  return (
+    <div className="learning-reasons">
+      <Text size="xs" fw={900} c="dimmed">{title}</Text>
+      {reasons.length ? (
+        reasons.slice(0, 4).map((item) => (
+          <Group className={`learning-reason ${tone}`} justify="space-between" key={item.reason}>
+            <Text size="sm">{item.reason}</Text>
+            <Badge variant="light" color={tone === 'success' ? 'teal' : 'orange'}>{item.count}</Badge>
+          </Group>
+        ))
+      ) : (
+        <Text size="sm" c="dimmed" mt={8}>样本不足</Text>
+      )}
+    </div>
+  );
+}
+
+function strategyParameterLabel(parameter: string) {
+  const labels: Record<string, string> = {
+    stop_loss: '止损比例',
+    risk_per_trade_pct: '单笔风险预算',
+    entry_premium: '计划买入上限'
+  };
+  return labels[parameter] ?? parameter;
+}
+
+function strategyConfidenceLabel(confidence: string) {
+  if (confidence === 'high') return '高置信';
+  if (confidence === 'medium') return '中置信';
+  return '低置信';
+}
+
+function strategyStatusLabel(status: string) {
+  if (status === 'paper') return '纸面实验';
+  if (status === 'review') return '复盘';
+  if (status === 'collecting') return '积累样本';
+  return status;
+}
+
+function formatStrategyNumber(parameter: string, value: number) {
+  if (parameter === 'risk_per_trade_pct' || parameter === 'max_single_position_pct') {
+    return formatPct(value);
+  }
+  if (Math.abs(value) <= 1) {
+    return formatPct(value * 100);
+  }
+  return formatNumber(value, 2);
+}
+
+function learningOutcomeLabel(outcome: string) {
+  if (outcome === 'win') return '盈利';
+  if (outcome === 'loss') return '亏损';
+  if (outcome === 'missed') return '未触发';
+  if (outcome === 'flat') return '持平';
+  return '未知';
+}
+
+function learningOutcomeColor(outcome: string) {
+  if (outcome === 'win') return 'teal';
+  if (outcome === 'loss') return 'red';
+  if (outcome === 'missed') return 'gray';
+  return 'blue';
 }
 
 function AlertsPage() {
@@ -1552,6 +2065,36 @@ function AlertsPage() {
   const [screenDateTouched, setScreenDateTouched] = useState(false);
   const [alertDateTouched, setAlertDateTouched] = useState(false);
   const [selectedAlert, setSelectedAlert] = useState<IntradayAlert | null>(null);
+  const [wechatSourceName, setWechatSourceName] = useState('21世纪经济报道');
+  const [wechatArticleUrl, setWechatArticleUrl] = useState('https://mp.weixin.qq.com/s/aPgU_HtBTNUrqoyrBVxgkA');
+  const [wechatFeedUrl, setWechatFeedUrl] = useState('');
+  const [wechatHtml, setWechatHtml] = useState('');
+  const queryClient = useQueryClient();
+
+  const wechatQuery = useQuery({
+    queryKey: ['wechat-knowledge'],
+    queryFn: fetchWechatKnowledge,
+    staleTime: 30_000
+  });
+
+  const subscriptionMutation = useMutation({
+    mutationFn: saveWechatSubscription,
+    onSuccess: () => {
+      notifications.show({ color: 'teal', message: '订阅源已保存' });
+      void queryClient.invalidateQueries({ queryKey: ['wechat-knowledge'] });
+    },
+    onError: (error) => notifications.show({ color: 'red', message: error instanceof Error ? error.message : '订阅源保存失败' })
+  });
+
+  const articleMutation = useMutation({
+    mutationFn: ingestWechatArticle,
+    onSuccess: (article) => {
+      notifications.show({ color: 'teal', message: `已提取：${article.title}` });
+      setWechatHtml('');
+      void queryClient.invalidateQueries({ queryKey: ['wechat-knowledge'] });
+    },
+    onError: (error) => notifications.show({ color: 'red', message: error instanceof Error ? error.message : '文章导入失败' })
+  });
 
   const reportsQuery = useQuery({
     queryKey: ['screen-reports'],
@@ -1618,6 +2161,22 @@ function AlertsPage() {
     void reportsQuery.refetch();
   }
 
+  function handleSaveWechatSubscription() {
+    subscriptionMutation.mutate({
+      source_name: wechatSourceName,
+      sample_url: wechatArticleUrl || null,
+      feed_url: wechatFeedUrl || null
+    });
+  }
+
+  function handleIngestWechatArticle() {
+    articleMutation.mutate({
+      source_name: wechatSourceName,
+      article_url: wechatArticleUrl,
+      html: wechatHtml || null
+    });
+  }
+
   const selectedScreenTradeDate = alertScreenDate ? toTradeDate(alertScreenDate) : '';
   const selectedReportQuery = useQuery({
     queryKey: ['screen-report', selectedScreenTradeDate],
@@ -1664,6 +2223,67 @@ function AlertsPage() {
         <RibbonCell label="推荐池" value={`${alertCandidates.length} 只`} detail={`已有报告 ${availableReportCount} 个`} />
         <RibbonCell label="目标池" value={`${plannedTargetCount} 只`} detail="设置过滤后的全量对象" />
         <RibbonCell label="数据状态" value={alertQuery.isFetching ? '更新中' : alertScreen ? '正常' : '待选择'} detail={alertQuery.data ? `最近 ${displayUpdateTime(alertQuery.data.generated_at)}` : '等待异动刷新'} tone={alertScreen ? 'good' : undefined} />
+      </Paper>
+
+      <Paper className="opportunity-board" withBorder>
+        <Group justify="space-between" align="flex-start" mb="md">
+          <div>
+            <Text fw={900} size="lg">公众号知识</Text>
+            <Text size="sm" c="dimmed">{wechatQuery.data?.capability_note ?? '保存来源并导入文章，系统提取摘要、机会、风险和主题标签。'}</Text>
+          </div>
+          <Badge color="blue" variant="light">{wechatQuery.data?.articles.length ?? 0} 篇</Badge>
+        </Group>
+
+        <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
+          <Stack gap="sm">
+            <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
+              <TextInput
+                label="公众号"
+                value={wechatSourceName}
+                onChange={(event) => setWechatSourceName(event.currentTarget.value)}
+              />
+              <TextInput
+                label="文章 URL"
+                value={wechatArticleUrl}
+                onChange={(event) => setWechatArticleUrl(event.currentTarget.value)}
+              />
+            </SimpleGrid>
+            <TextInput
+              label="Feed URL"
+              placeholder="RSS 或内部合法数据源"
+              value={wechatFeedUrl}
+              onChange={(event) => setWechatFeedUrl(event.currentTarget.value)}
+            />
+            <Textarea
+              label="文章 HTML"
+              minRows={4}
+              autosize
+              value={wechatHtml}
+              onChange={(event) => setWechatHtml(event.currentTarget.value)}
+            />
+            <Group gap="xs">
+              <Button
+                color="dark"
+                variant="light"
+                leftSection={<Newspaper size={15} />}
+                onClick={handleSaveWechatSubscription}
+                loading={subscriptionMutation.isPending}
+              >
+                保存订阅源
+              </Button>
+              <Button
+                color="dark"
+                leftSection={<DatabaseZap size={15} />}
+                onClick={handleIngestWechatArticle}
+                loading={articleMutation.isPending}
+              >
+                导入文章
+              </Button>
+            </Group>
+          </Stack>
+
+          <WechatKnowledgeList data={wechatQuery.data} loading={wechatQuery.isPending} />
+        </SimpleGrid>
       </Paper>
 
       <Paper className="opportunity-board" withBorder>
@@ -1819,6 +2439,93 @@ function AlertsPage() {
         onClose={() => setSelectedAlert(null)}
       />
     </Stack>
+  );
+}
+
+function WechatKnowledgeList({
+  data,
+  loading
+}: {
+  data?: WechatKnowledgeResponse;
+  loading: boolean;
+}) {
+  if (loading && !data) {
+    return (
+      <Stack gap="sm">
+        <Skeleton height={88} radius="md" />
+        <Skeleton height={88} radius="md" />
+      </Stack>
+    );
+  }
+  const articles = data?.articles ?? [];
+  if (!articles.length) {
+    return (
+      <div className="empty-state refined">
+        <Newspaper size={20} />
+        <span>暂无公众号文章知识。</span>
+      </div>
+    );
+  }
+  return (
+    <div className="wechat-knowledge-list">
+      {articles.slice(0, 4).map((article) => (
+        <WechatKnowledgeCard article={article} key={article.id} />
+      ))}
+    </div>
+  );
+}
+
+function WechatKnowledgeCard({ article }: { article: WechatArticle }) {
+  const relevanceColor = article.knowledge.market_relevance === 'high'
+    ? 'teal'
+    : article.knowledge.market_relevance === 'medium'
+      ? 'blue'
+      : 'gray';
+  return (
+    <div className="wechat-knowledge-card">
+      <Group justify="space-between" align="flex-start" gap="sm">
+        <div>
+          <Text fw={900} size="sm">{article.title}</Text>
+          <Text size="xs" c="dimmed">{article.source_name}</Text>
+        </div>
+        <Badge color={relevanceColor} variant="light">{article.knowledge.market_relevance}</Badge>
+      </Group>
+      <Text size="sm" mt={8}>{article.knowledge.summary}</Text>
+      {article.knowledge.tags.length ? (
+        <Group gap={6} mt={8}>
+          {article.knowledge.tags.slice(0, 6).map((tag) => (
+            <Badge color="blue" variant="outline" key={tag}>{tag}</Badge>
+          ))}
+        </Group>
+      ) : null}
+      {article.knowledge.opportunities.length || article.knowledge.risks.length ? (
+        <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs" mt={10}>
+          <WechatKnowledgeBullets title="机会" rows={article.knowledge.opportunities} tone="good" />
+          <WechatKnowledgeBullets title="风险" rows={article.knowledge.risks} tone="risk" />
+        </SimpleGrid>
+      ) : null}
+    </div>
+  );
+}
+
+function WechatKnowledgeBullets({
+  title,
+  rows,
+  tone
+}: {
+  title: string;
+  rows: string[];
+  tone: 'good' | 'risk';
+}) {
+  return (
+    <div className={`wechat-knowledge-bullets ${tone}`}>
+      <Text fw={900} size="xs">{title}</Text>
+      {rows.length ? (
+        rows.slice(0, 3).map((row) => <Text size="xs" c="dimmed" key={row}>{row}</Text>)
+      ) : (
+        <Text size="xs" c="dimmed">暂无</Text>
+      )}
+    </div>
   );
 }
 

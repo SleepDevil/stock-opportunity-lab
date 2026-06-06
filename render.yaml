@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: stock-opportunity-lab
+    runtime: docker
+    plan: free
+    autoDeploy: true
+    healthCheckPath: /api/health
+    envVars:
+      - key: STOCK_LAB_DATA_DIR
+        value: /data
+      - key: STOCK_LAB_DATABASE_URL
+        sync: false
+      - key: PYTHONUNBUFFERED
+        value: "1"
