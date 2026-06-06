@@ -11,7 +11,8 @@
     "test": "npm run test:api && npm run test:web",
     "test:api": "./.venv/bin/python -m pytest backend/tests",
     "test:web": "npm --prefix frontend run build",
-    "build": "npm --prefix frontend run build"
+    "build": "npm --prefix frontend run build",
+    "build:edgeone": "node scripts/build-edgeone.mjs"
   },
   "devDependencies": {
     "concurrently": "^9.2.1"

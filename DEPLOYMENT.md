@@ -1,15 +1,19 @@
 # 部署手册
 
-这份手册用于把 Stock Opportunity Lab 部署到免费云环境。当前推荐组合是：
+这份手册用于把 Stock Opportunity Lab 部署到免费云环境。当前保留两条路线：
 
-- 应用服务：Vercel
+- 中国大陆访问优先：EdgeOne Pages
+- 海外访问和现有线上演示：Vercel
 - 数据库：Neon Free Postgres
 - 代码来源：GitHub 仓库
 
-选择这个组合的原因：用户底线是不绑定付款方式；Render Blueprint 在当前账号下会要求补充 payment method，因此默认路径切换为 Vercel。Vercel 官方 FastAPI 文档支持根目录 `server.py` 暴露 `FastAPI` 实例；本仓库用 `server.py` 导入后端应用，并让 FastAPI 同源托管 `frontend/dist`。
+选择这个组合的原因：用户底线是不绑定付款方式；Render Blueprint 在当前账号下会要求补充 payment method。Vercel 可以免费部署但 `.vercel.app` 在中国大陆访问不稳定；没有自定义域名时，优先尝试 EdgeOne Pages 的默认项目域名。长期学习库继续用 Neon Postgres，避免把学习数据写入临时函数文件系统。
 
 参考官方文档：
 
+- EdgeOne Pages Python Runtime: https://pages.edgeone.ai/document/python
+- EdgeOne Pages edgeone.json: https://pages.edgeone.ai/zh/document/edgeone-json
+- EdgeOne Pages Cloud Functions: https://pages.edgeone.ai/document/cloud-functions
 - Vercel FastAPI: https://vercel.com/docs/frameworks/backend/fastapi
 - Vercel Python Runtime: https://vercel.com/docs/functions/runtimes/python
 - Vercel Project Configuration: https://vercel.com/docs/project-configuration
@@ -23,8 +27,13 @@
 - `requirements.txt`：Vercel Python Runtime 安装 FastAPI、pandas、AkShare、psycopg 等后端依赖。
 - `vercel.json`：执行 `npm --prefix frontend ci && npm --prefix frontend run build`，并把所有请求重写到 `server.py`。
 - `.vercelignore`：排除 `.venv`、`node_modules`、`data`、`artifacts` 等无需上传的本地文件。
+- `edgeone.json`：EdgeOne Pages 构建配置，安装前端依赖、执行 `node scripts/build-edgeone.mjs`、输出 `frontend/dist`，并把 Python Cloud Functions 部署到上海/香港。
+- `cloud-functions/api/[[default]].py`：EdgeOne FastAPI 入口。EdgeOne 会把 `/api/*` 映射到函数内部路径；这个适配层会把路径还原成现有后端需要的 `/api/*`。
+- `cloud-functions/[[default]].py`：EdgeOne 前端深链接兜底入口。EdgeOne 的 `edgeone.json` rewrite 不支持 SPA 路由重写，所以 `/backtest`、`/settings` 这类无后缀路径由该函数返回 `index.html`。
+- `cloud-functions/requirements.txt`：EdgeOne Python Runtime 安装 FastAPI、pandas、AkShare、psycopg 等后端依赖。
+- `scripts/build-edgeone.mjs`：把 `backend/app` 复制到 `cloud-functions/backend/app`，构建 Vite 前端，并复制 `index.html` 给 EdgeOne 的 SPA fallback。生成目录已被 `.gitignore` 排除。
 - `STOCK_LAB_DATABASE_URL`：线上策略学习库连接串，建议指向 Neon Postgres。
-- `STOCK_LAB_DATA_DIR`：行情缓存和报告目录。Vercel 默认使用 `/tmp/stock-opportunity-lab`。
+- `STOCK_LAB_DATA_DIR`：行情缓存和报告目录。Vercel 默认使用 `/tmp/stock-opportunity-lab`；EdgeOne 适配入口也会默认设置为 `/tmp/stock-opportunity-lab`。
 - `STOCK_LAB_FEISHU_APP_SECRET`：飞书机器人应用密钥，用于后端直接调用飞书 OpenAPI 发送通知。
 - `STOCK_LAB_CLIENT_AUTH_SECRET`：通知设置接口的 CSRF/HMAC 签名密钥，建议和飞书密钥分开配置。
 
@@ -58,7 +67,40 @@ postgresql://USER:PASSWORD@HOST.neon.tech/DB?sslmode=require
 
 `STOCK_LAB_DATABASE_URL` 不能提交到仓库，只能放在 Vercel 环境变量中。
 
-### 2. 准备 Vercel 登录
+### 2. 准备 EdgeOne Pages 项目
+
+1. 打开 EdgeOne Pages 控制台并登录。
+2. 新建 Pages 项目，导入 GitHub 仓库 `SleepDevil/stock-opportunity-lab`。
+3. 如果页面让你填写构建配置，保持仓库内 `edgeone.json` 为准：
+
+```text
+Install Command: npm --prefix frontend ci
+Build Command: node scripts/build-edgeone.mjs
+Output Directory: frontend/dist
+Node Version: 22.11.0
+```
+
+4. 在环境变量里添加：
+
+```text
+STOCK_LAB_DATABASE_URL=<你的 Neon pooled connection string>
+STOCK_LAB_CLIENT_AUTH_SECRET=<随机生成的长密钥>
+STOCK_LAB_FEISHU_APP_SECRET=<飞书机器人 app secret，可选>
+STOCK_LAB_FEISHU_APP_ID=<飞书机器人 app id，可选>
+```
+
+5. 部署完成后访问 EdgeOne 分配的默认项目域名，检查：
+
+```text
+https://<EdgeOne 默认域名>/api/health
+https://<EdgeOne 默认域名>/api/config
+https://<EdgeOne 默认域名>/backtest
+https://<EdgeOne 默认域名>/settings
+```
+
+EdgeOne Cloud Functions 当前 Python 运行时是 3.10，单函数包大小限制为 128 MB，单次请求最长 120 秒。AkShare、pandas、psycopg 依赖较重，如果构建提示函数包超过限制，需要把 AkShare 采集层拆到独立 worker，EdgeOne 只保留报告查询、设置写入和学习库能力。
+
+### 3. 准备 Vercel 登录
 
 本地可以使用 Vercel CLI：
 

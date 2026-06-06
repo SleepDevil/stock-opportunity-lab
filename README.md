@@ -49,7 +49,10 @@ http://127.0.0.1:8000
 
 ## 部署
 
-当前推荐用 Vercel 部署应用服务，数据库推荐用 Neon Free Postgres。这个组合不需要在代码里保存密钥，也能满足“不绑定付款方式优先”的部署目标；Vercel 承载 FastAPI + Vite 同源应用，Neon 承载长期策略学习库。
+当前推荐保留两条免费部署路径：
+
+- 中国大陆访问优先：EdgeOne Pages + Neon Free Postgres。EdgeOne Pages 会分配默认项目域名，不需要先准备自定义域名。
+- 海外访问和现有线上演示：Vercel + Neon Free Postgres。Vercel 不需要绑定付款方式，但 `.vercel.app` 在中国大陆访问不稳定。
 
 详细部署操作见 `DEPLOYMENT.md`。
 
@@ -59,6 +62,10 @@ http://127.0.0.1:8000
 - `requirements.txt`：Vercel Python Runtime 安装后端依赖。
 - `vercel.json`：构建 Vite 前端，并把所有路由交给 FastAPI 同源托管。
 - `.vercelignore`：排除本地缓存、虚拟环境、node_modules 和运行数据。
+- `edgeone.json`：EdgeOne Pages 构建配置，输出 Vite 静态资源并部署 Python Cloud Functions。
+- `cloud-functions/api/[[default]].py`：EdgeOne FastAPI 适配入口，把 EdgeOne 的 `/api/*` 路由转给现有后端。
+- `cloud-functions/[[default]].py`：EdgeOne 前端深链接兜底入口，用于刷新 `/backtest`、`/settings` 这类 SPA 路由。
+- `scripts/build-edgeone.mjs`：EdgeOne 构建脚本，复制后端源码到函数目录并构建前端。
 - `Dockerfile`：构建 Vite 前端，并由 FastAPI 同源托管静态产物。
 - `render.yaml`：Render 可选部署配置；当前不作为默认路径。
 - `STOCK_LAB_DATA_DIR`：可把行情缓存和报告目录切到云平台运行目录，默认本地 `data/`。
@@ -68,6 +75,15 @@ http://127.0.0.1:8000
 - `STOCK_LAB_FEISHU_APP_SECRET`：飞书机器人应用密钥，只能放在本地 `.env` 或云平台环境变量里，不能提交到仓库。
 - `STOCK_LAB_CLIENT_AUTH_SECRET`：前端通知设置接口的 CSRF/HMAC 签名密钥；线上建议单独配置，不配置时会退到飞书 app secret。
 
+EdgeOne Pages 部署流程：
+
+1. 把仓库推到 GitHub。
+2. 在 Neon 创建免费 Postgres 数据库，复制 pooled connection string。
+3. 在 EdgeOne Pages 新建项目，导入 `SleepDevil/stock-opportunity-lab`。
+4. 让项目使用仓库里的 `edgeone.json`，构建命令会自动运行 `node scripts/build-edgeone.mjs`。
+5. 在 EdgeOne 环境变量里填入 `STOCK_LAB_DATABASE_URL=postgresql://...`、`STOCK_LAB_CLIENT_AUTH_SECRET=...`，如需飞书通知再填 `STOCK_LAB_FEISHU_APP_SECRET=...`。
+6. 部署完成后访问 EdgeOne 分配的默认项目域名。
+
 Vercel 部署流程：
 
 1. 把仓库推到 GitHub。
@@ -76,7 +92,7 @@ Vercel 部署流程：
 4. 在 Vercel 环境变量里填入 `STOCK_LAB_DATABASE_URL=postgresql://...`、`STOCK_LAB_FEISHU_APP_SECRET=...` 和 `STOCK_LAB_CLIENT_AUTH_SECRET=...`。
 5. 部署完成后访问 Vercel 分配的 `https://*.vercel.app` 地址。
 
-Vercel 的本地文件系统是临时的。未配置 `STOCK_LAB_DATABASE_URL` 时，应用仍可启动并使用 `/tmp/stock-opportunity-lab/stock_lab.sqlite3` 做临时演示；但长期学习记忆、策略实验链和用户反馈必须使用外部 Postgres。
+Vercel 和 EdgeOne 的函数文件系统都是临时的。未配置 `STOCK_LAB_DATABASE_URL` 时，应用仍可启动并使用临时 SQLite 做演示；但长期学习记忆、策略实验链和用户反馈必须使用外部 Postgres。
 
 ## 数据库
 
