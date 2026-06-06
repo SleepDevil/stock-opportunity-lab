@@ -97,12 +97,13 @@ class handler(BaseHTTPRequestHandler):
     def _unavailable(self):
         self._json(
             {
+                "code": "EDGEONE_LIGHT_BACKEND_UNAVAILABLE",
                 "detail": (
                     "EdgeOne 当前部署为轻后端：支持前端、健康检查、配置和只读学习摘要。"
                     "用户设置、公众号写入、盘后扫描、实时行情和财务采集请使用 Vercel/Docker 后端或后续独立 worker。"
                 )
             },
-            status=HTTPStatus.SERVICE_UNAVAILABLE,
+            status=HTTPStatus.BAD_REQUEST,
         )
 
     def _json(self, payload: object, *, status: int = HTTPStatus.OK, headers: dict[str, str] | None = None) -> None:
