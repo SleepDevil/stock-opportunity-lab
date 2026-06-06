@@ -49,9 +49,10 @@ http://127.0.0.1:8000
 
 ## 部署
 
-当前推荐保留两条免费部署路径：
+当前推荐保留三条免费部署路径：
 
-- 中国大陆访问优先：EdgeOne Pages + Neon Free Postgres。EdgeOne Pages 会分配默认项目域名，不需要先准备自定义域名。
+- 永久静态入口：GitHub Pages。它不连接后端和数据库，只作为长期可访问的产品展示/入口页。
+- 中国大陆临时预览：EdgeOne Pages + Neon Free Postgres。未绑定自定义域名时，含中国大陆加速区域的系统预览链接有效期只有 3 小时。
 - 海外访问和现有线上演示：Vercel + Neon Free Postgres。Vercel 不需要绑定付款方式，但 `.vercel.app` 在中国大陆访问不稳定。
 
 详细部署操作见 `DEPLOYMENT.md`。
@@ -65,6 +66,7 @@ http://127.0.0.1:8000
 - `edgeone.json`：EdgeOne Pages 构建配置，输出 Vite 静态资源并部署 Python Cloud Functions。
 - `cloud-functions/api/[[default]].py`：EdgeOne 轻后端 HTTP 入口，承载健康检查、配置和只读学习摘要。
 - `scripts/build-edgeone.mjs`：EdgeOne 构建脚本，构建前端静态产物。
+- `.github/workflows/github-pages.yml`：GitHub Pages 静态镜像发布流程，使用 `VITE_STOCK_LAB_STATIC_MODE=true` 禁用真实后端请求。
 - `Dockerfile`：构建 Vite 前端，并由 FastAPI 同源托管静态产物。
 - `render.yaml`：Render 可选部署配置；当前不作为默认路径。
 - `STOCK_LAB_DATA_DIR`：可把行情缓存和报告目录切到云平台运行目录，默认本地 `data/`。
@@ -74,6 +76,13 @@ http://127.0.0.1:8000
 - `STOCK_LAB_FEISHU_APP_SECRET`：飞书机器人应用密钥，只能放在本地 `.env` 或云平台环境变量里，不能提交到仓库。
 - `STOCK_LAB_CLIENT_AUTH_SECRET`：前端通知设置接口的 CSRF/HMAC 签名密钥；线上建议单独配置，不配置时会退到飞书 app secret。
 
+GitHub Pages 部署流程：
+
+1. 仓库必须是 public，GitHub Free 才能公开访问 Pages。
+2. 推送到 `main` 后，`.github/workflows/github-pages.yml` 会构建静态镜像。
+3. 静态镜像地址固定为 `https://sleepdevil.github.io/stock-opportunity-lab/`。
+4. 这个入口只展示前端和受控占位数据；盘后扫描、通知、公众号写入、学习库写入需要使用 Vercel/Docker 后端。
+
 EdgeOne Pages 部署流程：
 
 1. 把仓库推到 GitHub。
@@ -81,7 +90,7 @@ EdgeOne Pages 部署流程：
 3. 在 EdgeOne Pages 新建项目，导入 `SleepDevil/stock-opportunity-lab`。
 4. 让项目使用仓库里的 `edgeone.json`，构建命令会自动运行 `node scripts/build-edgeone.mjs`。
 5. 在 EdgeOne 环境变量里填入 `STOCK_LAB_DATABASE_URL=postgresql://...`、`STOCK_LAB_CLIENT_AUTH_SECRET=...`，如需飞书通知再填 `STOCK_LAB_FEISHU_APP_SECRET=...`。
-6. 部署完成后访问 EdgeOne 分配的默认项目域名。
+6. 部署完成后访问 EdgeOne 预览链接。未绑定自定义域名时，含中国大陆加速区域的系统预览链接有效期只有 3 小时；长期稳定访问需要绑定已满足平台要求的自定义域名。
 
 Vercel 部署流程：
 

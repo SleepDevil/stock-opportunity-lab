@@ -12,7 +12,8 @@
     "test:api": "./.venv/bin/python -m pytest backend/tests",
     "test:web": "npm --prefix frontend run build",
     "build": "npm --prefix frontend run build",
-    "build:edgeone": "node scripts/build-edgeone.mjs"
+    "build:edgeone": "node scripts/build-edgeone.mjs",
+    "build:github-pages": "VITE_STOCK_LAB_STATIC_MODE=true npm --prefix frontend run build -- --base=/stock-opportunity-lab/"
   },
   "devDependencies": {
     "concurrently": "^9.2.1"

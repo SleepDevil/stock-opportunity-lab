@@ -27,6 +27,7 @@ import type {
   WechatSubscription,
   WechatSubscriptionRequest
 } from '../types/api';
+import { isStaticMode, staticRequest } from './staticApi';
 
 const headers = { 'Content-Type': 'application/json' };
 const clientAuthHeader = 'X-Stock-Lab-CSRF';
@@ -57,6 +58,9 @@ function requiresClientAuth(path: string): boolean {
 }
 
 async function request<T>(path: string, init?: RequestInit, retryClientAuth = true): Promise<T> {
+  if (isStaticMode()) {
+    return staticRequest<T>(path, init);
+  }
   const nextInit: RequestInit = { ...init, credentials: init?.credentials ?? 'same-origin' };
   if (requiresClientAuth(path)) {
     const nextHeaders = new Headers(init?.headers);

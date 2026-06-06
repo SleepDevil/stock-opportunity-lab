@@ -1,19 +1,23 @@
 # 部署手册
 
-这份手册用于把 Stock Opportunity Lab 部署到免费云环境。当前保留两条路线：
+这份手册用于把 Stock Opportunity Lab 部署到免费云环境。当前保留三条路线：
 
-- 中国大陆访问优先：EdgeOne Pages
-- 海外访问和现有线上演示：Vercel
+- 永久静态入口：GitHub Pages
+- 中国大陆临时预览：EdgeOne Pages
+- 完整功能入口：Vercel
 - 数据库：Neon Free Postgres
 - 代码来源：GitHub 仓库
 
-选择这个组合的原因：用户底线是不绑定付款方式；Render Blueprint 在当前账号下会要求补充 payment method。Vercel 可以免费部署但 `.vercel.app` 在中国大陆访问不稳定；没有自定义域名时，优先尝试 EdgeOne Pages 的默认项目域名。长期学习库继续用 Neon Postgres，避免把学习数据写入临时函数文件系统。
+选择这个组合的原因：用户底线是不绑定付款方式；Render Blueprint 在当前账号下会要求补充 payment method。Vercel 可以免费部署完整 FastAPI 后端，但 `.vercel.app` 在中国大陆访问不稳定。EdgeOne Pages 在含中国大陆加速区域未绑定自定义域名时，系统预览链接有效期只有 3 小时，适合临时验收，不适合作为长期入口。GitHub Pages 提供永久静态入口，但不能连接 Python 后端、数据库或 AkShare 采集。长期学习库继续用 Neon Postgres，避免把学习数据写入临时函数文件系统。
 
 参考官方文档：
 
 - EdgeOne Pages Python Runtime: https://pages.edgeone.ai/document/python
 - EdgeOne Pages edgeone.json: https://pages.edgeone.ai/zh/document/edgeone-json
 - EdgeOne Pages Cloud Functions: https://pages.edgeone.ai/document/cloud-functions
+- EdgeOne Pages Domain Management: https://pages.edgeone.ai/document/domain-overview
+- GitHub Pages custom workflows: https://docs.github.com/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages
+- GitHub Pages REST API: https://docs.github.com/en/rest/pages/pages
 - Vercel FastAPI: https://vercel.com/docs/frameworks/backend/fastapi
 - Vercel Python Runtime: https://vercel.com/docs/functions/runtimes/python
 - Vercel Project Configuration: https://vercel.com/docs/project-configuration
@@ -31,12 +35,33 @@
 - `cloud-functions/api/[[default]].py`：EdgeOne 轻后端 HTTP 入口。它直接提供健康检查、配置和只读学习摘要；盘后扫描、实时行情、财务采集、用户设置写入和公众号写入保留给 Vercel/Docker 或后续独立 worker。
 - `cloud-functions/requirements.txt`：EdgeOne Python Runtime 轻部署不安装第三方 Python 依赖，避免触发包体积限制。
 - `scripts/build-edgeone.mjs`：构建 Vite 前端，静态产物输出到 `frontend/dist`。
+- `.github/workflows/github-pages.yml`：GitHub Pages 静态镜像发布流程。它设置 `VITE_STOCK_LAB_STATIC_MODE=true`，让前端在没有 `/api` 后端的情况下显示长期可访问的只读占位体验。
 - `STOCK_LAB_DATABASE_URL`：线上策略学习库连接串，建议指向 Neon Postgres。
 - `STOCK_LAB_DATA_DIR`：行情缓存和报告目录。Vercel 默认使用 `/tmp/stock-opportunity-lab`；EdgeOne 适配入口也会默认设置为 `/tmp/stock-opportunity-lab`。
 - `STOCK_LAB_FEISHU_APP_SECRET`：飞书机器人应用密钥，用于后端直接调用飞书 OpenAPI 发送通知。
 - `STOCK_LAB_CLIENT_AUTH_SECRET`：通知设置接口的 CSRF/HMAC 签名密钥，建议和飞书密钥分开配置。
 
 Docker/Render 配置仍保留，作为以后愿意绑定付款方式或迁移到容器平台时的可选方案。
+
+## GitHub Pages 永久静态入口
+
+GitHub Pages 用于解决“没有自定义域名时入口链接会过期”的问题。它的固定地址是：
+
+```text
+https://sleepdevil.github.io/stock-opportunity-lab/
+```
+
+限制：
+
+- 只部署 Vite 静态产物，不部署 Python/FastAPI。
+- 不连接 Neon 数据库，不读取或写入用户设置、公众号知识、策略学习记录。
+- 所有需要后端的动作会提示“GitHub Pages 静态镜像不可用”。
+
+启用条件：
+
+1. 仓库必须是 public。
+2. GitHub Pages 的 build type 设置为 `workflow`。
+3. 推送到 `main` 后，`Deploy GitHub Pages` workflow 自动构建并发布 `frontend/dist`。
 
 ## 你需要准备的事情
 
@@ -88,7 +113,7 @@ STOCK_LAB_FEISHU_APP_SECRET=<飞书机器人 app secret，可选>
 STOCK_LAB_FEISHU_APP_ID=<飞书机器人 app id，可选>
 ```
 
-5. 部署完成后访问 EdgeOne 分配的默认项目域名，检查：
+5. 部署完成后访问 EdgeOne 预览链接，检查：
 
 ```text
 https://<EdgeOne 默认域名>/api/health
@@ -97,6 +122,8 @@ https://<EdgeOne 默认域名>/
 ```
 
 EdgeOne Cloud Functions 当前 Python 运行时是 3.10，单函数包大小限制为 128 MB，单次请求最长 120 秒。EdgeOne 版本不打包第三方 Python 依赖，适合承载前端、健康检查和配置等轻能力；盘后全市场扫描、实时行情采集、财务报表抓取、用户设置写入和公众号知识写入继续使用 Vercel/Docker 路线，后续应拆到独立 worker。EdgeOne 官方配置文档说明静态 rewrite 不支持 SPA 前端路由重写，所以默认域下请从 `/` 进入应用，直接刷新 `/backtest`、`/settings` 这类深链接不作为 EdgeOne 轻部署验收项。
+
+EdgeOne 官方域名文档说明：当项目加速区域选择“中国大陆可用区”或“全球可用区（含中国大陆）”时，必须使用系统生成的 preview URL 访问，链接有效期只有 3 小时，超时会返回 401。可以在控制台重新点击 preview 生成新链接；真正长期稳定的 EdgeOne 入口需要绑定自定义域名。含中国大陆加速区域的自定义域名还涉及 ICP 备案要求。
 
 ### 3. 准备 Vercel 登录
 

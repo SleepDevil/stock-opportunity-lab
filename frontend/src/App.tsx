@@ -95,6 +95,7 @@ import {
   submitLearningFeedback
 } from './lib/api';
 import { classForSigned, displayTradeDate, formatMoney, formatNumber, formatPct, todayInputValue, toTradeDate } from './lib/format';
+import { isStaticMode } from './lib/staticApi';
 import type {
   AppConfig,
   BacktestResponse,
@@ -342,6 +343,7 @@ function AppShell() {
   const pathname = useRouterState({ select: (state) => state.location.pathname }) as AppRoutePath;
   const page = pageMeta[pathname] ?? pageMeta['/'];
   const isSettingsRoute = pathname === '/settings';
+  const staticMode = isStaticMode();
   const initialScreen = useMemo(() => readLastScreen(), []);
 
   const [scanDate, setScanDate] = useState(todayInputValue());
@@ -655,6 +657,12 @@ function AppShell() {
               </Tooltip>
             )}
           </header>
+
+          {staticMode ? (
+            <Alert color="blue" variant="light" radius="md" mb="md" title="GitHub Pages 静态入口">
+              当前页面是长期静态镜像，不连接后端、数据库或行情采集；完整扫描、通知和学习库写入请使用 Vercel/Docker 后端。
+            </Alert>
+          ) : null}
 
           <Outlet />
         </main>
