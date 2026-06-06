@@ -28,7 +28,7 @@
 - `vercel.json`：执行 `npm --prefix frontend ci && npm --prefix frontend run build`，并把所有请求重写到 `server.py`。
 - `.vercelignore`：排除 `.venv`、`node_modules`、`data`、`artifacts` 等无需上传的本地文件。
 - `edgeone.json`：EdgeOne Pages 构建配置，安装前端依赖、执行 `node scripts/build-edgeone.mjs`、输出 `frontend/dist`，并把 Python Cloud Functions 部署到上海/香港。
-- `cloud-functions/api/[[default]].py`：EdgeOne FastAPI 入口。EdgeOne 会把 `/api/*` 映射到函数内部路径；这个适配层会把路径还原成现有后端需要的 `/api/*`。
+- `cloud-functions/api/index.py`：EdgeOne FastAPI 入口。EdgeOne 会把 `/api/*` 交给该框架入口；这个适配层会把路径还原成现有后端需要的 `/api/*`。
 - `cloud-functions/[[default]].py`：EdgeOne 前端深链接兜底入口。EdgeOne 的 `edgeone.json` rewrite 不支持 SPA 路由重写，所以 `/backtest`、`/settings` 这类无后缀路径由该函数返回 `index.html`。
 - `cloud-functions/requirements.txt`：EdgeOne Python Runtime 安装 FastAPI、pandas、psycopg 等轻后端依赖。为满足 EdgeOne 单函数包 128 MiB 限制，这里不安装 AkShare/curl-cffi；实时行情采集继续使用 Vercel/Docker 路线或后续独立 worker。
 - `scripts/build-edgeone.mjs`：把 `backend/app` 复制到 `cloud-functions/backend/app`，构建 Vite 前端，并复制 `index.html` 给 EdgeOne 的 SPA fallback。生成目录已被 `.gitignore` 排除。

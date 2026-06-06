@@ -63,7 +63,7 @@ http://127.0.0.1:8000
 - `vercel.json`：构建 Vite 前端，并把所有路由交给 FastAPI 同源托管。
 - `.vercelignore`：排除本地缓存、虚拟环境、node_modules 和运行数据。
 - `edgeone.json`：EdgeOne Pages 构建配置，输出 Vite 静态资源并部署 Python Cloud Functions。
-- `cloud-functions/api/[[default]].py`：EdgeOne FastAPI 适配入口，把 EdgeOne 的 `/api/*` 路由转给现有后端。
+- `cloud-functions/api/index.py`：EdgeOne FastAPI 适配入口，把 EdgeOne 的 `/api/*` 路由转给现有后端。
 - `cloud-functions/[[default]].py`：EdgeOne 前端深链接兜底入口，用于刷新 `/backtest`、`/settings` 这类 SPA 路由。
 - `scripts/build-edgeone.mjs`：EdgeOne 构建脚本，复制后端源码到函数目录并构建前端。
 - `Dockerfile`：构建 Vite 前端，并由 FastAPI 同源托管静态产物。
