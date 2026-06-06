@@ -178,6 +178,7 @@ export STOCK_LAB_AI_COMMAND="/app/scripts/stock-lab-llm"
 
 - Render CLI 未登录，命令返回 `run render login to authenticate`。
 - Render Blueprint 校验需要先有 active workspace 或显式 workspace ID。
+- 如果 Blueprint 校验返回 `need_payment_info`，需要先在 Render Dashboard 的 workspace Billing 页面补充 payment method。Render 官方 Dashboard 文档说明 Billing 页面可用于更新 payment method 和查看用量。
 - Neon 数据库需要你登录后创建并复制连接串。
 - 本机未安装 Docker CLI，所以无法在本机直接构建镜像；Render 云端会根据 `Dockerfile` 构建。
 
