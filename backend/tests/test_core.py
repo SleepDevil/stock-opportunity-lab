@@ -1488,30 +1488,50 @@ def test_notification_settings_roundtrip(tmp_path: Path) -> None:
 
     saved = save_notification_settings(
         config,
-        " Trader@Example.COM ",
+        " Trader@bytedance.COM ",
         board_exclusion_enabled=True,
         excluded_boards=["star", "startup", "invalid", "star"],
     )
 
-    assert saved.user_email == "trader@example.com"
+    assert saved.user_email == "trader@bytedance.com"
     assert saved.board_exclusion_enabled is True
     assert saved.excluded_boards == ["startup", "star"]
     assert load_notification_settings(config).user_email is None
-    assert load_notification_settings(config, "trader@example.com") == saved
+    assert load_notification_settings(config, "trader") == saved
     assert not (tmp_path / "settings.json").exists()
+
+
+def test_notification_settings_accepts_bytedance_email_prefix(tmp_path: Path) -> None:
+    config = AppConfig(data_dir=tmp_path)
+
+    saved = save_notification_settings(config, " Trader ")
+
+    assert saved.user_email == "trader@bytedance.com"
+    assert load_notification_settings(config, "trader").user_email == "trader@bytedance.com"
+
+
+def test_notification_settings_rejects_non_bytedance_email(tmp_path: Path) -> None:
+    config = AppConfig(data_dir=tmp_path)
+
+    try:
+        save_notification_settings(config, "trader@example.com")
+    except ValueError as exc:
+        assert "@bytedance.com" in str(exc)
+    else:
+        raise AssertionError("external email domain should be rejected")
 
 
 def test_notification_settings_imports_legacy_json(tmp_path: Path) -> None:
     config = AppConfig(data_dir=tmp_path)
     legacy_path = tmp_path / "settings.json"
-    legacy_path.write_text(json.dumps({"user_email": " Legacy@Example.COM "}), encoding="utf-8")
+    legacy_path.write_text(json.dumps({"user_email": " Legacy@bytedance.com "}), encoding="utf-8")
 
-    loaded = load_notification_settings(config, "legacy@example.com")
+    loaded = load_notification_settings(config, "legacy")
 
-    assert loaded.user_email == "legacy@example.com"
+    assert loaded.user_email == "legacy@bytedance.com"
     assert loaded.board_exclusion_enabled is False
     assert loaded.excluded_boards == []
-    assert load_notification_settings(config, "missing@example.com").user_email == "missing@example.com"
+    assert load_notification_settings(config, "missing").user_email == "missing@bytedance.com"
 
 
 def test_send_feishu_tip_uses_feishu_bot_apis(monkeypatch) -> None:
@@ -1587,11 +1607,11 @@ def test_notification_test_endpoint_reports_send_failure(tmp_path: Path, monkeyp
     from app.models import NotificationSettingsUpdate
 
     config = AppConfig(data_dir=tmp_path)
-    save_notification_settings(config, "user@example.com")
+    save_notification_settings(config, "user")
     monkeypatch.setattr(main, "CONFIG", config)
     monkeypatch.setattr(main, "send_feishu_tip", lambda *_args: False)
 
-    response = main.test_notification(NotificationSettingsUpdate(user_email="user@example.com"))
+    response = main.test_notification(NotificationSettingsUpdate(user_email="user"))
 
     assert not response.ok
     assert response.message == "通知发送失败，请检查飞书机器人配置和账号邮箱"
@@ -1604,16 +1624,16 @@ def test_notification_settings_api_requires_client_auth(tmp_path: Path, monkeypa
     monkeypatch.setattr(main, "CONFIG", config)
     client = TestClient(main.app)
 
-    get_response = client.get("/api/notification-settings?user_email=user@example.com")
+    get_response = client.get("/api/notification-settings?user_email=user")
     put_response = client.put(
         "/api/notification-settings",
-        json={"user_email": "user@example.com"},
+        json={"user_email": "user"},
         headers={"Origin": "https://evil.example"},
     )
 
     assert get_response.status_code == 403
     assert put_response.status_code == 403
-    assert load_notification_settings(config, "user@example.com").excluded_boards == []
+    assert load_notification_settings(config, "user").excluded_boards == []
 
 
 def test_client_auth_rejects_untrusted_origin(tmp_path: Path, monkeypatch) -> None:
@@ -1639,18 +1659,18 @@ def test_notification_settings_api_accepts_signed_frontend_request(tmp_path: Pat
     token = token_response.json()["csrf_token"]
     save_response = client.put(
         "/api/notification-settings",
-        json={"user_email": "user@example.com", "board_exclusion_enabled": True, "excluded_boards": ["star"]},
+        json={"user_email": "user", "board_exclusion_enabled": True, "excluded_boards": ["star"]},
         headers={"Origin": "http://localhost:5173", "X-Stock-Lab-CSRF": token},
     )
     get_response = client.get(
-        "/api/notification-settings?user_email=user@example.com",
+        "/api/notification-settings?user_email=user",
         headers={"X-Stock-Lab-CSRF": token},
     )
 
     assert token_response.status_code == 200
     assert token_response.cookies.get("stock_lab_csrf") == token
     assert save_response.status_code == 200
-    assert save_response.json()["user_email"] == "user@example.com"
+    assert save_response.json()["user_email"] == "user@bytedance.com"
     assert get_response.status_code == 200
     assert get_response.json()["excluded_boards"] == ["star"]
 
@@ -1659,7 +1679,7 @@ def test_notification_test_api_blocks_missing_client_auth(tmp_path: Path, monkey
     from app import main
 
     config = AppConfig(data_dir=tmp_path, client_auth_secret="client-secret")
-    save_notification_settings(config, "user@example.com")
+    save_notification_settings(config, "user")
     monkeypatch.setattr(main, "CONFIG", config)
     called = False
 
@@ -1671,7 +1691,7 @@ def test_notification_test_api_blocks_missing_client_auth(tmp_path: Path, monkey
     monkeypatch.setattr(main, "send_feishu_tip", fake_send)
     client = TestClient(main.app)
 
-    response = client.post("/api/notification-settings/test", json={"user_email": "user@example.com"}, headers={"Origin": "http://localhost:5173"})
+    response = client.post("/api/notification-settings/test", json={"user_email": "user"}, headers={"Origin": "http://localhost:5173"})
 
     assert response.status_code == 403
     assert not called
@@ -1681,7 +1701,7 @@ def test_notification_test_api_accepts_signed_frontend_request(tmp_path: Path, m
     from app import main
 
     config = AppConfig(data_dir=tmp_path, client_auth_secret="client-secret")
-    save_notification_settings(config, "user@example.com")
+    save_notification_settings(config, "user")
     monkeypatch.setattr(main, "CONFIG", config)
     monkeypatch.setattr(main, "send_feishu_tip", lambda *_args: True)
     client = TestClient(main.app)
@@ -1689,7 +1709,7 @@ def test_notification_test_api_accepts_signed_frontend_request(tmp_path: Path, m
 
     response = client.post(
         "/api/notification-settings/test",
-        json={"user_email": "user@example.com"},
+        json={"user_email": "user"},
         headers={"Origin": "http://localhost:5173", "X-Stock-Lab-CSRF": token},
     )
 

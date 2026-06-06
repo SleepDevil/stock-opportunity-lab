@@ -213,6 +213,7 @@ const pageMeta: Record<AppRoutePath, { title: string; subtitle: string }> = {
 const SETTINGS_STORAGE_KEY = 'stock-opportunity-lab:screen-preferences';
 const USER_EMAIL_STORAGE_KEY = 'stock-opportunity-lab:user-email';
 const LAST_SCREEN_STORAGE_KEY = 'stock-opportunity-lab:last-screen';
+const BYTEDANCE_EMAIL_SUFFIX = '@bytedance.com';
 
 const defaultScreenPreferences: ScreenPreferences = {
   boardExclusionEnabled: false,
@@ -265,7 +266,20 @@ function readStoredUserEmail(): string {
   if (typeof window === 'undefined') {
     return '';
   }
-  return window.localStorage.getItem(USER_EMAIL_STORAGE_KEY) ?? '';
+  return bytedanceEmailFromPrefix(window.localStorage.getItem(USER_EMAIL_STORAGE_KEY) ?? '');
+}
+
+function emailPrefix(value: string): string {
+  const email = value.trim().toLowerCase();
+  if (email.endsWith(BYTEDANCE_EMAIL_SUFFIX)) {
+    return email.slice(0, -BYTEDANCE_EMAIL_SUFFIX.length);
+  }
+  return email.split('@')[0] ?? '';
+}
+
+function bytedanceEmailFromPrefix(value: string): string {
+  const prefix = emailPrefix(value);
+  return prefix ? `${prefix}${BYTEDANCE_EMAIL_SUFFIX}` : '';
 }
 
 function readLastScreen(): ScreenResponse | undefined {
@@ -2953,12 +2967,12 @@ function SettingsPage() {
     queryKey: ['notification-settings', userEmail],
     queryFn: () => fetchNotificationSettings(userEmail || undefined)
   });
-  const [notificationEmail, setNotificationEmail] = useState(userEmail);
+  const [notificationEmailPrefix, setNotificationEmailPrefix] = useState(emailPrefix(userEmail));
   const saveNotificationMutation = useMutation({
     mutationFn: saveNotificationSettings,
     onSuccess: (result) => {
       const savedEmail = result.user_email ?? '';
-      setNotificationEmail(savedEmail);
+      setNotificationEmailPrefix(emailPrefix(savedEmail));
       setUserEmail(savedEmail);
       setScreenPreferences({
         boardExclusionEnabled: Boolean(result.board_exclusion_enabled),
@@ -2998,13 +3012,13 @@ function SettingsPage() {
   });
   const activeLabels = boardOptions.filter((item) => screenPreferences.excludedBoards.includes(item.value)).map((item) => item.label);
   const requestPreview = screenPreferences.boardExclusionEnabled ? screenPreferences.excludedBoards : [];
-  const effectiveNotificationEmail = (userEmail || notificationEmail.trim()).trim();
+  const effectiveNotificationEmail = userEmail || bytedanceEmailFromPrefix(notificationEmailPrefix);
 
   useEffect(() => {
     if (!userEmail) {
       return;
     }
-    setNotificationEmail(userEmail);
+    setNotificationEmailPrefix(emailPrefix(userEmail));
   }, [userEmail]);
 
   useEffect(() => {
@@ -3012,7 +3026,7 @@ function SettingsPage() {
     if (!data?.user_email) {
       return;
     }
-    setNotificationEmail(data.user_email);
+    setNotificationEmailPrefix(emailPrefix(data.user_email));
     setScreenPreferences({
       boardExclusionEnabled: Boolean(data.board_exclusion_enabled),
       excludedBoards: sanitizeBoards(data.excluded_boards)
@@ -3115,12 +3129,14 @@ function SettingsPage() {
         </Group>
         <SimpleGrid cols={{ base: 1, md: 2 }} spacing="sm">
           <TextInput
-            label="账户邮箱"
-            placeholder="name@example.com"
-            value={notificationEmail}
+            label="公司邮箱前缀"
+            placeholder="name"
+            value={notificationEmailPrefix}
             leftSection={<Mail size={15} />}
+            rightSection={<Text size="xs" c="dimmed">{BYTEDANCE_EMAIL_SUFFIX}</Text>}
+            rightSectionWidth={132}
             disabled={notificationQuery.isLoading}
-            onChange={(event) => setNotificationEmail(event.currentTarget.value)}
+            onChange={(event) => setNotificationEmailPrefix(emailPrefix(event.currentTarget.value))}
           />
           <div className="notification-actions">
             <Button
@@ -3128,9 +3144,9 @@ function SettingsPage() {
               variant="filled"
               leftSection={<Settings2 size={16} />}
               loading={saveNotificationMutation.isPending}
-              disabled={!notificationEmail.trim()}
+              disabled={!notificationEmailPrefix.trim()}
               onClick={() => saveNotificationMutation.mutate({
-                user_email: notificationEmail.trim(),
+                user_email: bytedanceEmailFromPrefix(notificationEmailPrefix),
                 board_exclusion_enabled: screenPreferences.boardExclusionEnabled,
                 excluded_boards: requestPreview
               })}

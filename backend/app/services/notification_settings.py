@@ -9,6 +9,8 @@ from app.services.learning_store import get_user_settings, save_user_settings
 
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+EMAIL_LOCAL_RE = re.compile(r"^[^@\s]+$")
+BYTEDANCE_EMAIL_DOMAIN = "bytedance.com"
 BOARD_ORDER = ("startup", "star", "bse")
 
 
@@ -20,8 +22,14 @@ def normalize_user_email(value: str | None) -> str | None:
     email = (value or "").strip().lower()
     if not email:
         return None
+    if "@" not in email:
+        if not EMAIL_LOCAL_RE.fullmatch(email):
+            raise ValueError("请输入有效的飞书账号邮箱前缀")
+        return f"{email}@{BYTEDANCE_EMAIL_DOMAIN}"
     if not EMAIL_RE.fullmatch(email):
         raise ValueError("请输入有效的飞书账号邮箱")
+    if email.rsplit("@", 1)[1] != BYTEDANCE_EMAIL_DOMAIN:
+        raise ValueError("当前只支持 @bytedance.com 公司邮箱")
     return email
 
 
@@ -81,7 +89,10 @@ def migrate_legacy_notification_settings(config: AppConfig) -> None:
         return
     if not isinstance(data, dict):
         return
-    email = normalize_user_email(data.get("user_email"))
+    try:
+        email = normalize_user_email(data.get("user_email"))
+    except ValueError:
+        return
     if not email or get_user_settings(config, email):
         return
     save_user_settings(
