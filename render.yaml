@@ -10,5 +10,9 @@ services:
         value: /data
       - key: STOCK_LAB_DATABASE_URL
         sync: false
+      - key: STOCK_LAB_FEISHU_APP_SECRET
+        sync: false
+      - key: STOCK_LAB_CLIENT_AUTH_SECRET
+        sync: false
       - key: PYTHONUNBUFFERED
         value: "1"

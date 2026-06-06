@@ -25,6 +25,8 @@
 - `.vercelignore`：排除 `.venv`、`node_modules`、`data`、`artifacts` 等无需上传的本地文件。
 - `STOCK_LAB_DATABASE_URL`：线上策略学习库连接串，建议指向 Neon Postgres。
 - `STOCK_LAB_DATA_DIR`：行情缓存和报告目录。Vercel 默认使用 `/tmp/stock-opportunity-lab`。
+- `STOCK_LAB_FEISHU_APP_SECRET`：飞书机器人应用密钥，用于后端直接调用飞书 OpenAPI 发送通知。
+- `STOCK_LAB_CLIENT_AUTH_SECRET`：通知设置接口的 CSRF/HMAC 签名密钥，建议和飞书密钥分开配置。
 
 Docker/Render 配置仍保留，作为以后愿意绑定付款方式或迁移到容器平台时的可选方案。
 
@@ -86,13 +88,15 @@ npx vercel@latest --prod --yes
 stock-opportunity-lab
 ```
 
-部署前或部署后都可以设置数据库环境变量：
+部署前或部署后都可以设置数据库和飞书环境变量：
 
 ```bash
 npx vercel@latest env add STOCK_LAB_DATABASE_URL production
+npx vercel@latest env add STOCK_LAB_FEISHU_APP_SECRET production
+npx vercel@latest env add STOCK_LAB_CLIENT_AUTH_SECRET production
 ```
 
-按提示粘贴 Neon pooled connection string。设置后需要重新部署一次：
+按提示分别粘贴 Neon pooled connection string、飞书机器人 app secret 和客户端鉴权签名密钥。设置后需要重新部署一次：
 
 ```bash
 npx vercel@latest --prod --yes
@@ -116,6 +120,8 @@ npm --prefix frontend ci && npm --prefix frontend run build
 
 ```text
 STOCK_LAB_DATABASE_URL=<你的 Neon pooled connection string>
+STOCK_LAB_FEISHU_APP_SECRET=<飞书机器人 app secret>
+STOCK_LAB_CLIENT_AUTH_SECRET=<随机生成的长密钥>
 ```
 
 7. 点击 Deploy。
@@ -135,6 +141,8 @@ https://<你的服务域名>/alerts
 
 - `/api/health` 返回 ready。
 - `/api/config` 里 `database_url` 应该是脱敏后的 Postgres URL，不能暴露密码。
+- `/api/config` 里 `feishu_app_secret` 和 `client_auth_secret` 只能是 `***` 或 `null`，不能暴露真实密钥。
+- `/settings` 保存账户邮箱和板块偏好后，Neon 的 `user_settings` 表应出现对应记录。
 - `/backtest` 能看到策略进化、学习样本、实验对照相关入口。
 - `/alerts` 能看到公众号知识入口，并能保存 `21世纪经济报道` 订阅源。
 

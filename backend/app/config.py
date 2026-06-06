@@ -3,10 +3,12 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 import os
 from pathlib import Path
+import secrets
 from typing import Any
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROCESS_CLIENT_AUTH_SECRET = secrets.token_urlsafe(32)
 
 
 def default_data_dir() -> Path:
@@ -20,6 +22,18 @@ def default_data_dir() -> Path:
 
 def default_database_url() -> str | None:
     return os.getenv("STOCK_LAB_DATABASE_URL")
+
+
+def default_feishu_app_id() -> str:
+    return os.getenv("STOCK_LAB_FEISHU_APP_ID", "cli_a6f82b2e17f6100c")
+
+
+def default_feishu_app_secret() -> str | None:
+    return os.getenv("STOCK_LAB_FEISHU_APP_SECRET")
+
+
+def default_client_auth_secret() -> str:
+    return os.getenv("STOCK_LAB_CLIENT_AUTH_SECRET") or os.getenv("STOCK_LAB_FEISHU_APP_SECRET") or PROCESS_CLIENT_AUTH_SECRET
 
 
 @dataclass
@@ -67,6 +81,9 @@ class AppConfig:
     project_root: Path = PROJECT_ROOT
     data_dir: Path = field(default_factory=default_data_dir)
     database_url: str | None = field(default_factory=default_database_url)
+    feishu_app_id: str = field(default_factory=default_feishu_app_id)
+    feishu_app_secret: str | None = field(default_factory=default_feishu_app_secret)
+    client_auth_secret: str = field(default_factory=default_client_auth_secret)
     screen: ScreenConfig = field(default_factory=ScreenConfig)
     strategy: StrategyConfig = field(default_factory=StrategyConfig)
 
@@ -92,6 +109,8 @@ class AppConfig:
         data["project_root"] = str(self.project_root)
         data["data_dir"] = str(self.data_dir)
         data["database_url"] = mask_database_url(self.database_url) if self.database_url else str(self.default_sqlite_database_path)
+        data["feishu_app_secret"] = "***" if self.feishu_app_secret else None
+        data["client_auth_secret"] = "***"
         return data
 
     @property

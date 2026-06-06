@@ -157,6 +157,8 @@ type AppState = {
   market: MarketSnapshot;
   screenPreferences: ScreenPreferences;
   setScreenPreferences: (value: ScreenPreferences) => void;
+  userEmail: string;
+  setUserEmail: (value: string) => void;
   effectiveExcludedBoards: string[];
   excludedBoardLabels: string[];
   selectedCandidate: Candidate | null;
@@ -209,6 +211,7 @@ const pageMeta: Record<AppRoutePath, { title: string; subtitle: string }> = {
 };
 
 const SETTINGS_STORAGE_KEY = 'stock-opportunity-lab:screen-preferences';
+const USER_EMAIL_STORAGE_KEY = 'stock-opportunity-lab:user-email';
 const LAST_SCREEN_STORAGE_KEY = 'stock-opportunity-lab:last-screen';
 
 const defaultScreenPreferences: ScreenPreferences = {
@@ -256,6 +259,13 @@ function readScreenPreferences(): ScreenPreferences {
   } catch {
     return defaultScreenPreferences;
   }
+}
+
+function readStoredUserEmail(): string {
+  if (typeof window === 'undefined') {
+    return '';
+  }
+  return window.localStorage.getItem(USER_EMAIL_STORAGE_KEY) ?? '';
 }
 
 function readLastScreen(): ScreenResponse | undefined {
@@ -324,6 +334,7 @@ function AppShell() {
   const [refresh, setRefresh] = useState(false);
   const [enrich, setEnrich] = useState(false);
   const [screenPreferences, setScreenPreferences] = useState<ScreenPreferences>(readScreenPreferences);
+  const [userEmail, setUserEmail] = useState(readStoredUserEmail);
   const [screen, setScreen] = useState<ScreenResponse | undefined>(initialScreen);
   const [backtest, setBacktest] = useState<BacktestResponse>();
   const [activeScreenTaskId, setActiveScreenTaskId] = useState<string | null>(null);
@@ -392,6 +403,15 @@ function AppShell() {
   useEffect(() => {
     window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(screenPreferences));
   }, [screenPreferences]);
+
+  useEffect(() => {
+    const email = userEmail.trim();
+    if (email) {
+      window.localStorage.setItem(USER_EMAIL_STORAGE_KEY, email);
+    } else {
+      window.localStorage.removeItem(USER_EMAIL_STORAGE_KEY);
+    }
+  }, [userEmail]);
 
   useEffect(() => {
     const task = screenTaskQuery.data;
@@ -471,7 +491,8 @@ function AppShell() {
       refresh: options.refresh ?? refresh,
       limit: options.limit ?? limit,
       enrich: options.enrich ?? enrich,
-      exclude_boards: effectiveExcludedBoards
+      exclude_boards: effectiveExcludedBoards,
+      user_email: userEmail || undefined
     });
   }
 
@@ -541,6 +562,8 @@ function AppShell() {
     market,
     screenPreferences,
     setScreenPreferences,
+    userEmail,
+    setUserEmail,
     effectiveExcludedBoards,
     excludedBoardLabels,
     selectedCandidate,
@@ -2923,28 +2946,35 @@ function SectorsPage() {
 }
 
 function SettingsPage() {
-  const { screenPreferences, setScreenPreferences, config, configLoading } = useAppState();
+  const { screenPreferences, setScreenPreferences, userEmail, setUserEmail, config, configLoading } = useAppState();
+  const queryClient = useQueryClient();
   const navigate = useNavigate();
   const notificationQuery = useQuery({
-    queryKey: ['notification-settings'],
-    queryFn: fetchNotificationSettings
+    queryKey: ['notification-settings', userEmail],
+    queryFn: () => fetchNotificationSettings(userEmail || undefined)
   });
-  const [notificationEmail, setNotificationEmail] = useState('');
+  const [notificationEmail, setNotificationEmail] = useState(userEmail);
   const saveNotificationMutation = useMutation({
     mutationFn: saveNotificationSettings,
     onSuccess: (result) => {
-      setNotificationEmail(result.user_email ?? '');
-      void notificationQuery.refetch();
+      const savedEmail = result.user_email ?? '';
+      setNotificationEmail(savedEmail);
+      setUserEmail(savedEmail);
+      setScreenPreferences({
+        boardExclusionEnabled: Boolean(result.board_exclusion_enabled),
+        excludedBoards: sanitizeBoards(result.excluded_boards)
+      });
+      queryClient.setQueryData(['notification-settings', savedEmail], result);
       notifications.show({
         color: 'teal',
-        title: '通知账号已保存',
-        message: result.user_email ? `后续任务会通知 ${result.user_email}。` : '已清空通知邮箱。'
+        title: '账户设置已保存',
+        message: result.user_email ? `后续任务会按 ${result.user_email} 的偏好运行并通知。` : '请填写邮箱作为登录标识。'
       });
     },
     onError: (error) => {
       notifications.show({
         color: 'red',
-        title: '通知账号保存失败',
+        title: '账户设置保存失败',
         message: error instanceof Error ? error.message : '请检查邮箱格式'
       });
     }
@@ -2968,10 +2998,26 @@ function SettingsPage() {
   });
   const activeLabels = boardOptions.filter((item) => screenPreferences.excludedBoards.includes(item.value)).map((item) => item.label);
   const requestPreview = screenPreferences.boardExclusionEnabled ? screenPreferences.excludedBoards : [];
+  const effectiveNotificationEmail = (userEmail || notificationEmail.trim()).trim();
 
   useEffect(() => {
-    setNotificationEmail(notificationQuery.data?.user_email ?? '');
-  }, [notificationQuery.data?.user_email]);
+    if (!userEmail) {
+      return;
+    }
+    setNotificationEmail(userEmail);
+  }, [userEmail]);
+
+  useEffect(() => {
+    const data = notificationQuery.data;
+    if (!data?.user_email) {
+      return;
+    }
+    setNotificationEmail(data.user_email);
+    setScreenPreferences({
+      boardExclusionEnabled: Boolean(data.board_exclusion_enabled),
+      excludedBoards: sanitizeBoards(data.excluded_boards)
+    });
+  }, [notificationQuery.data, setScreenPreferences]);
 
   function update(patch: Partial<ScreenPreferences>) {
     setScreenPreferences({
@@ -3060,16 +3106,16 @@ function SettingsPage() {
       <Paper className="settings-card" withBorder>
         <Group justify="space-between" align="flex-start" mb="md">
           <div>
-            <Text fw={900}>飞书机器人通知</Text>
-            <Text size="sm" c="dimmed">缺少历史快照的扫描会转入后台；任务完成后用这里保存的邮箱发送通知。</Text>
+            <Text fw={900}>账户邮箱与通知</Text>
+            <Text size="sm" c="dimmed">邮箱作为当前配置的简单登录标识，也用于后台任务完成后的飞书通知。</Text>
           </div>
-          <Badge color={notificationQuery.data?.user_email ? 'teal' : 'gray'} variant="light">
-            {notificationQuery.data?.user_email ? '已注册' : '未配置'}
+          <Badge color={userEmail ? 'teal' : 'gray'} variant="light">
+            {userEmail ? '已登录' : '未登录'}
           </Badge>
         </Group>
         <SimpleGrid cols={{ base: 1, md: 2 }} spacing="sm">
           <TextInput
-            label="飞书账号邮箱"
+            label="账户邮箱"
             placeholder="name@example.com"
             value={notificationEmail}
             leftSection={<Mail size={15} />}
@@ -3082,17 +3128,22 @@ function SettingsPage() {
               variant="filled"
               leftSection={<Settings2 size={16} />}
               loading={saveNotificationMutation.isPending}
-              onClick={() => saveNotificationMutation.mutate({ user_email: notificationEmail.trim() || null })}
+              disabled={!notificationEmail.trim()}
+              onClick={() => saveNotificationMutation.mutate({
+                user_email: notificationEmail.trim(),
+                board_exclusion_enabled: screenPreferences.boardExclusionEnabled,
+                excluded_boards: requestPreview
+              })}
             >
-              保存通知账号
+              保存账户设置
             </Button>
             <Button
               variant="light"
               color="teal"
               leftSection={<Send size={16} />}
               loading={testNotificationMutation.isPending}
-              disabled={!notificationQuery.data?.user_email}
-              onClick={() => testNotificationMutation.mutate()}
+              disabled={!effectiveNotificationEmail}
+              onClick={() => testNotificationMutation.mutate(effectiveNotificationEmail)}
             >
               发送测试
             </Button>

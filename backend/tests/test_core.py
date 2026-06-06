@@ -5,6 +5,7 @@ from pathlib import Path
 import os
 from datetime import date, datetime
 
+from fastapi.testclient import TestClient
 import pandas as pd
 
 from app.config import AppConfig, ScreenConfig
@@ -40,6 +41,19 @@ def test_app_config_allows_data_dir_override(tmp_path: Path, monkeypatch) -> Non
     assert config.data_dir == target
     assert config.raw_dir == target / "raw"
     assert config.reports_dir == target / "reports"
+
+
+def test_app_config_masks_feishu_secret(monkeypatch) -> None:
+    monkeypatch.setenv("STOCK_LAB_FEISHU_APP_SECRET", "super-secret")
+    monkeypatch.setenv("STOCK_LAB_CLIENT_AUTH_SECRET", "client-secret")
+
+    config = AppConfig()
+
+    assert config.feishu_app_id == "cli_a6f82b2e17f6100c"
+    assert config.feishu_app_secret == "super-secret"
+    assert config.client_auth_secret == "client-secret"
+    assert config.public_dict()["feishu_app_secret"] == "***"
+    assert config.public_dict()["client_auth_secret"] == "***"
 
 
 def test_frontend_static_path_resolves_spa_and_assets(tmp_path: Path) -> None:
@@ -1472,19 +1486,42 @@ def test_notification_settings_roundtrip(tmp_path: Path) -> None:
 
     assert load_notification_settings(config).user_email is None
 
-    saved = save_notification_settings(config, " Trader@Example.COM ")
+    saved = save_notification_settings(
+        config,
+        " Trader@Example.COM ",
+        board_exclusion_enabled=True,
+        excluded_boards=["star", "startup", "invalid", "star"],
+    )
 
     assert saved.user_email == "trader@example.com"
-    assert load_notification_settings(config).user_email == "trader@example.com"
+    assert saved.board_exclusion_enabled is True
+    assert saved.excluded_boards == ["startup", "star"]
+    assert load_notification_settings(config).user_email is None
+    assert load_notification_settings(config, "trader@example.com") == saved
+    assert not (tmp_path / "settings.json").exists()
 
 
-def test_send_feishu_tip_posts_expected_payload(monkeypatch) -> None:
-    import json
+def test_notification_settings_imports_legacy_json(tmp_path: Path) -> None:
+    config = AppConfig(data_dir=tmp_path)
+    legacy_path = tmp_path / "settings.json"
+    legacy_path.write_text(json.dumps({"user_email": " Legacy@Example.COM "}), encoding="utf-8")
 
-    captured: dict[str, object] = {}
+    loaded = load_notification_settings(config, "legacy@example.com")
+
+    assert loaded.user_email == "legacy@example.com"
+    assert loaded.board_exclusion_enabled is False
+    assert loaded.excluded_boards == []
+    assert load_notification_settings(config, "missing@example.com").user_email == "missing@example.com"
+
+
+def test_send_feishu_tip_uses_feishu_bot_apis(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
 
     class FakeResponse:
         status = 200
+
+        def __init__(self, payload: dict[str, object]) -> None:
+            self.payload = payload
 
         def __enter__(self):
             return self
@@ -1492,20 +1529,172 @@ def test_send_feishu_tip_posts_expected_payload(monkeypatch) -> None:
         def __exit__(self, *_args):
             return None
 
+        def read(self) -> bytes:
+            return json.dumps(self.payload).encode("utf-8")
+
     def fake_urlopen(request, timeout):
-        captured["url"] = request.full_url
-        captured["timeout"] = timeout
-        captured["body"] = json.loads(request.data.decode("utf-8"))
-        captured["content_type"] = request.headers["Content-type"]
-        return FakeResponse()
+        body = json.loads(request.data.decode("utf-8"))
+        calls.append(
+            {
+                "url": request.full_url,
+                "timeout": timeout,
+                "body": body,
+                "authorization": request.headers.get("Authorization"),
+                "content_type": request.headers["Content-type"],
+            }
+        )
+        if request.full_url.endswith("/auth/v3/tenant_access_token/internal"):
+            return FakeResponse({"code": 0, "msg": "ok", "tenant_access_token": "t-token", "expire": 7200})
+        if "/contact/v3/users/batch_get_id" in request.full_url:
+            return FakeResponse({"code": 0, "msg": "ok", "data": {"user_list": [{"user_id": "ou_user"}]}})
+        if "/im/v1/messages" in request.full_url:
+            return FakeResponse({"code": 0, "msg": "ok", "data": {"message_id": "om_message"}})
+        raise AssertionError(f"unexpected request: {request.full_url}")
 
     monkeypatch.setattr("app.services.notifications.urllib.request.urlopen", fake_urlopen)
 
-    assert send_feishu_tip("扫描完成", "user@example.com", timeout=3)
-    assert captured["url"] == "https://7n3ztxp6.fn.bytedance.net/sendtips"
-    assert captured["timeout"] == 3
-    assert captured["body"] == {"msg": "扫描完成", "userEmail": "user@example.com"}
-    assert captured["content_type"] == "application/json"
+    config = AppConfig(feishu_app_secret="app-secret")
+
+    assert send_feishu_tip("扫描完成", "user@example.com", config=config, timeout=3)
+    assert all(str(call["url"]).startswith("https://open.feishu.cn/open-apis/") for call in calls)
+    assert calls[0]["url"] == "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
+    assert calls[0]["body"] == {"app_id": "cli_a6f82b2e17f6100c", "app_secret": "app-secret"}
+    assert calls[1]["url"] == (
+        "https://open.feishu.cn/open-apis/contact/v3/users/batch_get_id?user_id_type=open_id"
+    )
+    assert calls[1]["authorization"] == "Bearer t-token"
+    assert calls[1]["body"] == {"emails": ["user@example.com"]}
+    assert calls[2]["url"] == "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id"
+    assert calls[2]["authorization"] == "Bearer t-token"
+    assert calls[2]["body"]["receive_id"] == "ou_user"
+    assert calls[2]["body"]["msg_type"] == "text"
+    assert json.loads(calls[2]["body"]["content"]) == {"text": '<at user_id="ou_user"></at> 扫描完成'}
+    assert {call["timeout"] for call in calls} == {3}
+    assert {call["content_type"] for call in calls} == {"application/json"}
+
+
+def test_send_feishu_tip_returns_false_without_secret(monkeypatch) -> None:
+    def fail_urlopen(*_args, **_kwargs):
+        raise AssertionError("network should not be called without a configured app secret")
+
+    monkeypatch.setattr("app.services.notifications.urllib.request.urlopen", fail_urlopen)
+
+    assert not send_feishu_tip("扫描完成", "user@example.com", config=AppConfig(feishu_app_secret=None))
+
+
+def test_notification_test_endpoint_reports_send_failure(tmp_path: Path, monkeypatch) -> None:
+    from app import main
+    from app.models import NotificationSettingsUpdate
+
+    config = AppConfig(data_dir=tmp_path)
+    save_notification_settings(config, "user@example.com")
+    monkeypatch.setattr(main, "CONFIG", config)
+    monkeypatch.setattr(main, "send_feishu_tip", lambda *_args: False)
+
+    response = main.test_notification(NotificationSettingsUpdate(user_email="user@example.com"))
+
+    assert not response.ok
+    assert response.message == "通知发送失败，请检查飞书机器人配置和账号邮箱"
+
+
+def test_notification_settings_api_requires_client_auth(tmp_path: Path, monkeypatch) -> None:
+    from app import main
+
+    config = AppConfig(data_dir=tmp_path, client_auth_secret="client-secret")
+    monkeypatch.setattr(main, "CONFIG", config)
+    client = TestClient(main.app)
+
+    get_response = client.get("/api/notification-settings?user_email=user@example.com")
+    put_response = client.put(
+        "/api/notification-settings",
+        json={"user_email": "user@example.com"},
+        headers={"Origin": "https://evil.example"},
+    )
+
+    assert get_response.status_code == 403
+    assert put_response.status_code == 403
+    assert load_notification_settings(config, "user@example.com").excluded_boards == []
+
+
+def test_client_auth_rejects_untrusted_origin(tmp_path: Path, monkeypatch) -> None:
+    from app import main
+
+    config = AppConfig(data_dir=tmp_path, client_auth_secret="client-secret")
+    monkeypatch.setattr(main, "CONFIG", config)
+    client = TestClient(main.app)
+
+    response = client.get("/api/client-auth", headers={"Origin": "https://evil.example"})
+
+    assert response.status_code == 403
+
+
+def test_notification_settings_api_accepts_signed_frontend_request(tmp_path: Path, monkeypatch) -> None:
+    from app import main
+
+    config = AppConfig(data_dir=tmp_path, client_auth_secret="client-secret")
+    monkeypatch.setattr(main, "CONFIG", config)
+    client = TestClient(main.app)
+
+    token_response = client.get("/api/client-auth", headers={"Origin": "http://localhost:5173"})
+    token = token_response.json()["csrf_token"]
+    save_response = client.put(
+        "/api/notification-settings",
+        json={"user_email": "user@example.com", "board_exclusion_enabled": True, "excluded_boards": ["star"]},
+        headers={"Origin": "http://localhost:5173", "X-Stock-Lab-CSRF": token},
+    )
+    get_response = client.get(
+        "/api/notification-settings?user_email=user@example.com",
+        headers={"X-Stock-Lab-CSRF": token},
+    )
+
+    assert token_response.status_code == 200
+    assert token_response.cookies.get("stock_lab_csrf") == token
+    assert save_response.status_code == 200
+    assert save_response.json()["user_email"] == "user@example.com"
+    assert get_response.status_code == 200
+    assert get_response.json()["excluded_boards"] == ["star"]
+
+
+def test_notification_test_api_blocks_missing_client_auth(tmp_path: Path, monkeypatch) -> None:
+    from app import main
+
+    config = AppConfig(data_dir=tmp_path, client_auth_secret="client-secret")
+    save_notification_settings(config, "user@example.com")
+    monkeypatch.setattr(main, "CONFIG", config)
+    called = False
+
+    def fake_send(*_args):
+        nonlocal called
+        called = True
+        return True
+
+    monkeypatch.setattr(main, "send_feishu_tip", fake_send)
+    client = TestClient(main.app)
+
+    response = client.post("/api/notification-settings/test", json={"user_email": "user@example.com"}, headers={"Origin": "http://localhost:5173"})
+
+    assert response.status_code == 403
+    assert not called
+
+
+def test_notification_test_api_accepts_signed_frontend_request(tmp_path: Path, monkeypatch) -> None:
+    from app import main
+
+    config = AppConfig(data_dir=tmp_path, client_auth_secret="client-secret")
+    save_notification_settings(config, "user@example.com")
+    monkeypatch.setattr(main, "CONFIG", config)
+    monkeypatch.setattr(main, "send_feishu_tip", lambda *_args: True)
+    client = TestClient(main.app)
+    token = client.get("/api/client-auth", headers={"Origin": "http://localhost:5173"}).json()["csrf_token"]
+
+    response = client.post(
+        "/api/notification-settings/test",
+        json={"user_email": "user@example.com"},
+        headers={"Origin": "http://localhost:5173", "X-Stock-Lab-CSRF": token},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "message": "测试通知已发送"}
 
 
 def test_missing_historical_snapshot_is_queued(tmp_path: Path, monkeypatch) -> None:

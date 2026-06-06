@@ -12,6 +12,7 @@ class ScreenRequest(BaseModel):
     limit: int | None = Field(default=None, ge=1, le=200)
     enrich: bool = False
     exclude_boards: list[str] = Field(default_factory=list)
+    user_email: str | None = Field(default=None, max_length=254)
 
 
 class BacktestRequest(BaseModel):
@@ -75,10 +76,14 @@ class ApiMessage(BaseModel):
 
 class NotificationSettings(BaseModel):
     user_email: str | None = Field(default=None, max_length=254)
+    board_exclusion_enabled: bool = False
+    excluded_boards: list[str] = Field(default_factory=list)
 
 
 class NotificationSettingsUpdate(BaseModel):
     user_email: str | None = Field(default=None, max_length=254)
+    board_exclusion_enabled: bool = False
+    excluded_boards: list[str] = Field(default_factory=list)
 
 
 class ScreenResponse(BaseModel):

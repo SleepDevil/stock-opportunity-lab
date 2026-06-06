@@ -28,9 +28,45 @@ import type {
 } from '../types/api';
 
 const headers = { 'Content-Type': 'application/json' };
+const clientAuthHeader = 'X-Stock-Lab-CSRF';
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, init);
+let clientAuthTokenPromise: Promise<string> | null = null;
+
+async function clientAuthToken(): Promise<string> {
+  clientAuthTokenPromise ??= fetch('/api/client-auth', { credentials: 'same-origin' })
+    .then(async (response) => {
+      if (!response.ok) {
+        throw new Error(response.statusText || '客户端鉴权失败');
+      }
+      const body = (await response.json()) as { csrf_token?: string };
+      if (!body.csrf_token) {
+        throw new Error('客户端鉴权令牌缺失');
+      }
+      return body.csrf_token;
+    })
+    .catch((error) => {
+      clientAuthTokenPromise = null;
+      throw error;
+    });
+  return clientAuthTokenPromise;
+}
+
+function requiresClientAuth(path: string): boolean {
+  return path.startsWith('/api/notification-settings');
+}
+
+async function request<T>(path: string, init?: RequestInit, retryClientAuth = true): Promise<T> {
+  const nextInit: RequestInit = { ...init, credentials: init?.credentials ?? 'same-origin' };
+  if (requiresClientAuth(path)) {
+    const nextHeaders = new Headers(init?.headers);
+    nextHeaders.set(clientAuthHeader, await clientAuthToken());
+    nextInit.headers = nextHeaders;
+  }
+  const response = await fetch(path, nextInit);
+  if (response.status === 403 && retryClientAuth && requiresClientAuth(path)) {
+    clientAuthTokenPromise = null;
+    return request<T>(path, init, false);
+  }
   if (!response.ok) {
     let message = response.statusText;
     try {
@@ -54,6 +90,7 @@ export function runScreen(input: {
   limit?: number;
   enrich?: boolean;
   exclude_boards?: string[];
+  user_email?: string | null;
 }): Promise<ScreenResult> {
   return request<ScreenResult>('/api/screen', {
     method: 'POST',
@@ -235,8 +272,13 @@ export function fetchTask(taskId: string): Promise<TaskStatusResponse> {
   return request<TaskStatusResponse>(`/api/tasks/${taskId}`);
 }
 
-export function fetchNotificationSettings(): Promise<NotificationSettings> {
-  return request<NotificationSettings>('/api/notification-settings');
+export function fetchNotificationSettings(userEmail?: string): Promise<NotificationSettings> {
+  const params = new URLSearchParams();
+  if (userEmail) {
+    params.set('user_email', userEmail);
+  }
+  const suffix = params.toString() ? `?${params.toString()}` : '';
+  return request<NotificationSettings>(`/api/notification-settings${suffix}`);
 }
 
 export function saveNotificationSettings(input: NotificationSettings): Promise<NotificationSettings> {
@@ -247,10 +289,10 @@ export function saveNotificationSettings(input: NotificationSettings): Promise<N
   });
 }
 
-export function sendTestNotification(): Promise<{ ok: boolean; message: string }> {
+export function sendTestNotification(userEmail: string): Promise<{ ok: boolean; message: string }> {
   return request<{ ok: boolean; message: string }>('/api/notification-settings/test', {
     method: 'POST',
     headers,
-    body: JSON.stringify({})
+    body: JSON.stringify({ user_email: userEmail })
   });
 }

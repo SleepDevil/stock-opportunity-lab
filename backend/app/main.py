@@ -5,7 +5,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import Body, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
@@ -44,6 +44,14 @@ from app.models import (
 )
 from app.services.ai import build_payload, explain
 from app.services.backtest import run_backtest
+from app.services.client_auth import (
+    CSRF_COOKIE_NAME,
+    ClientAuthError,
+    issue_csrf_token,
+    is_https_request,
+    reject_untrusted_origin_if_present,
+    require_client_auth,
+)
 from app.services.data_provider import AkShareProvider
 from app.services.evolution import run_evolution_cycle
 from app.services.financials import AkShareFinancialProvider, run_stock_financials
@@ -101,26 +109,60 @@ def get_config():
     return CONFIG.public_dict()
 
 
-@app.get("/api/notification-settings", response_model=NotificationSettings)
-def get_notification_settings() -> NotificationSettings:
-    return load_notification_settings(CONFIG)
-
-
-@app.put("/api/notification-settings", response_model=NotificationSettings)
-def put_notification_settings(request: NotificationSettingsUpdate) -> NotificationSettings:
+def require_frontend_client(request: Request) -> None:
     try:
-        return save_notification_settings(CONFIG, request.user_email)
+        require_client_auth(request, CONFIG)
+    except ClientAuthError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+@app.get("/api/client-auth")
+def get_client_auth(request: Request, response: Response) -> dict[str, str]:
+    try:
+        reject_untrusted_origin_if_present(request)
+    except ClientAuthError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    token = issue_csrf_token(CONFIG)
+    response.set_cookie(
+        CSRF_COOKIE_NAME,
+        token,
+        httponly=True,
+        secure=is_https_request(request),
+        samesite="lax",
+        max_age=12 * 60 * 60,
+        path="/",
+    )
+    return {"csrf_token": token}
+
+
+@app.get("/api/notification-settings", response_model=NotificationSettings, dependencies=[Depends(require_frontend_client)])
+def get_notification_settings(user_email: str | None = None) -> NotificationSettings:
+    try:
+        return load_notification_settings(CONFIG, user_email)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@app.post("/api/notification-settings/test", response_model=ApiMessage)
-def test_notification() -> ApiMessage:
-    settings = load_notification_settings(CONFIG)
+@app.put("/api/notification-settings", response_model=NotificationSettings, dependencies=[Depends(require_frontend_client)])
+def put_notification_settings(request: NotificationSettingsUpdate) -> NotificationSettings:
+    try:
+        return save_notification_settings(
+            CONFIG,
+            request.user_email,
+            board_exclusion_enabled=request.board_exclusion_enabled,
+            excluded_boards=request.excluded_boards,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/notification-settings/test", response_model=ApiMessage, dependencies=[Depends(require_frontend_client)])
+def test_notification(request: NotificationSettingsUpdate | None = Body(default=None)) -> ApiMessage:
+    settings = load_notification_settings(CONFIG, request.user_email if request else None)
     if not settings.user_email:
         raise HTTPException(status_code=400, detail="请先在策略设置里保存飞书账号邮箱")
     ok = send_feishu_tip("Stock Opportunity Lab 测试通知：飞书机器人已经打通。", settings.user_email)
-    return ApiMessage(ok=ok, message="测试通知已发送" if ok else "没有配置通知邮箱")
+    return ApiMessage(ok=ok, message="测试通知已发送" if ok else "通知发送失败，请检查飞书机器人配置和账号邮箱")
 
 
 @app.get("/api/tasks/{task_id}", response_model=TaskStatusResponse)
@@ -509,7 +551,7 @@ def should_queue_screen(request: ScreenRequest, trade_date: str) -> bool:
 
 
 def enqueue_screen_task(request: ScreenRequest, trade_date: str) -> TaskAcceptedResponse:
-    settings = load_notification_settings(CONFIG)
+    settings = load_notification_settings(CONFIG, request.user_email)
     task_id = screen_task_id(request, trade_date)
     message = (
         f"{display_date(trade_date)} 缺少本地全市场快照，已转入后台重建。"
@@ -534,6 +576,7 @@ def screen_task_id(request: ScreenRequest, trade_date: str) -> str:
         "limit": request.limit,
         "enrich": request.enrich,
         "exclude_boards": sorted(request.exclude_boards),
+        "user_email": request.user_email or "",
     }
     digest = hashlib.sha1(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
     return f"screen-{trade_date}-{digest[:10]}"

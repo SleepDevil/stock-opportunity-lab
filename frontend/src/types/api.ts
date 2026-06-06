@@ -627,4 +627,6 @@ export type AppConfig = {
 
 export type NotificationSettings = {
   user_email?: string | null;
+  board_exclusion_enabled?: boolean;
+  excluded_boards?: string[];
 };

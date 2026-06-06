@@ -50,6 +50,7 @@ flowchart LR
 | 自我复盘 | `backend/app/services/evolution.py` | 编排最近盘后报告 -> 次日回测 -> 学习 -> 优化建议 |
 | 公众号知识 | `backend/app/services/wechat_knowledge.py` | 保存公众号来源、导入文章、提取关键知识 |
 | AI 解释 | `backend/app/services/ai.py` | 构造 AI payload，并生成规则化解释 |
+| 客户端鉴权 | `backend/app/services/client_auth.py` | 为通知设置接口签发并校验 CSRF/HMAC token、同源来源和浏览器请求来源 |
 | 前端工作台 | `frontend/src/App.tsx` | 页面路由、状态编排、策略进化 UI |
 
 ## 4. 数据流
@@ -230,6 +231,7 @@ data/
 | 表 | 作用 |
 | --- | --- |
 | `learning_records` | 保存每条推荐的验证结果、系统归因、特征快照、用户复盘 |
+| `user_settings` | 按邮箱保存简单账户 profile、通知邮箱、板块排除开关和排除范围 |
 | `strategy_experiments` | 保存每次参数建议的稳定实验版本 |
 | `strategy_experiment_outcomes` | 保存同一实验版本在 baseline/proposed 下的后续表现 |
 | `wechat_subscriptions` | 保存公众号来源、样例文章 URL 和可选 feed |
@@ -242,6 +244,7 @@ data/
 - 学习记录不再绑定单机 JSON 文件，适合长期样本积累。
 - 多次相同参数建议会复用同一个实验 ID，避免重复建实验。
 - 后续回测会把 baseline/proposed 表现写入实验结果表，形成策略 A/B 进化链。
+- 用户邮箱和策略偏好不再只依赖浏览器本地存储，换设备后可按邮箱恢复配置。
 - 测试环境仍可用临时 SQLite 文件完全隔离。
 
 限制：
@@ -277,10 +280,33 @@ flowchart LR
 - Render Free Web Service 不能保留本地文件系统改动。
 - 真正要持续进化，应配置 `STOCK_LAB_DATABASE_URL` 指向 Neon/Supabase/Turso 等外部存储。
 
-## 10. 关键 API
+## 10. 公网安全与通知鉴权
+
+飞书通知能力不再请求内网 `sendtips` 服务，而是在后端通过飞书 OpenAPI 完成：
+
+1. `STOCK_LAB_FEISHU_APP_ID` / `STOCK_LAB_FEISHU_APP_SECRET` 换取 `tenant_access_token`。
+2. 用账户邮箱调用飞书通讯录接口换取 `open_id`。
+3. 用机器人向该 `open_id` 发送文本通知。
+
+机器人 app secret 只能存在于 Vercel/Render 环境变量或本地 `.env`，不能进入前端 bundle、文档示例或 Git 仓库。`/api/config` 对 `feishu_app_secret` 和 `client_auth_secret` 只返回掩码。
+
+由于浏览器前端无法安全保存真正的服务密钥，“只有自己的前端才能调用”采用同源浏览器请求边界，而不是把 secret 下发给前端：
+
+- `GET /api/client-auth` 由后端签发 HMAC CSRF token，并设置 `HttpOnly`、`SameSite=Lax` 的 `stock_lab_csrf` cookie。
+- 前端请求封装会在访问 `/api/notification-settings*` 时自动领取 token，并通过 `X-Stock-Lab-CSRF` header 带回。
+- 后端要求 header token 与 cookie token 一致，并使用 `STOCK_LAB_CLIENT_AUTH_SECRET` 验证签名和有效期。
+- 通知设置写入和测试发送还要求 `Origin`/`Referer` 属于部署同源或本地开发前端，并拒绝 `Sec-Fetch-Site: cross-site` 的浏览器请求。
+- 当前受保护范围包括 `GET/PUT /api/notification-settings` 和 `POST /api/notification-settings/test`。后台任务完成后的实际发信仍由服务端内部调用 `send_feishu_tip()`，不暴露公网收件人参数。
+
+这个机制能阻断外部网页的跨站诱导、普通跨域脚本调用和无 token 的直接调用；它不是多用户身份认证。若后续要把服务开放给多人或保护全部投研数据，应在此基础上增加登录态、用户会话、速率限制和审计日志。
+
+## 11. 关键 API
 
 | API | 方法 | 作用 |
 | --- | --- | --- |
+| `/api/client-auth` | GET | 签发前端访问通知设置接口所需的 CSRF/HMAC token |
+| `/api/notification-settings` | GET/PUT | 读取或保存账户邮箱、通知与板块偏好，要求客户端鉴权 |
+| `/api/notification-settings/test` | POST | 发送飞书测试通知，要求客户端鉴权 |
 | `/api/screen` | POST | 盘后扫描并生成候选 |
 | `/api/screen-report` | GET | 读取历史扫描报告 |
 | `/api/backtest` | POST | 手动验证某次推荐在实际日的表现 |
@@ -295,7 +321,7 @@ flowchart LR
 | `/api/intraday-alerts` | POST | 盘中告警 |
 | `/api/sector-flow` | GET | 候选池板块/行业聚合 |
 
-## 11. 测试策略
+## 12. 测试策略
 
 后端测试在 `backend/tests/test_core.py`，核心覆盖：
 
@@ -308,13 +334,14 @@ flowchart LR
 - 策略优化器会基于亏损/止损样本提出保守参数实验，并保存稳定实验版本。
 - 后续回测会记录 baseline/proposed 的实验结果对照。
 - 自我复盘周期会选择最近盘后报告并返回回测和优化证据。
+- 通知设置接口要求签名 CSRF token、可信前端来源和 cookie/header 双提交。
 
 前端验证依赖：
 
 - `npm --prefix frontend run build`：TypeScript + Vite build。
 - 浏览器检查：确认关键页面和策略进化面板可渲染，无控制台错误。
 
-## 12. 后续演进路线
+## 13. 后续演进路线
 
 优先级最高的下一步：
 
@@ -322,4 +349,4 @@ flowchart LR
 2. 定时自我复盘：每天收盘后自动运行 `/api/evolution-cycle`，并发送复盘摘要。
 3. 统计显著性：不要只看胜率，还要看样本量、盈亏比、最大回撤、市场环境分层和置信区间。
 4. 数据备份：为外部 Postgres 增加定期导出和恢复流程。
-5. 云端安全：增加登录、访问控制和敏感配置管理，避免公开服务暴露个人数据或通知配置。
+5. 云端安全：在当前客户端 CSRF/同源保护之上增加登录、访问控制、速率限制和敏感操作审计，避免公开服务暴露个人数据或通知配置。

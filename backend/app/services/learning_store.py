@@ -30,6 +30,16 @@ SCHEMA = [
     "CREATE INDEX IF NOT EXISTS idx_learning_records_code ON learning_records(code)",
     "CREATE INDEX IF NOT EXISTS idx_learning_records_dates ON learning_records(screen_date, actual_date)",
     """
+    CREATE TABLE IF NOT EXISTS user_settings (
+        user_email TEXT PRIMARY KEY,
+        board_exclusion_enabled INTEGER NOT NULL DEFAULT 0,
+        excluded_boards_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_user_settings_updated_at ON user_settings(updated_at)",
+    """
     CREATE TABLE IF NOT EXISTS strategy_experiments (
         id TEXT PRIMARY KEY,
         status TEXT NOT NULL,
@@ -162,6 +172,44 @@ def replace_learning_records(config: AppConfig, records: dict[str, dict[str, Any
         execute(conn, "DELETE FROM learning_records")
         for record_id, record in records.items():
             upsert_learning_record(conn, record_id, record)
+
+
+def get_user_settings(config: AppConfig, user_email: str) -> dict[str, Any]:
+    ensure_schema(config)
+    with connect(config) as conn:
+        row = execute(conn, "SELECT * FROM user_settings WHERE user_email = ?", (user_email,)).fetchone()
+    return user_settings_row(row) if row else {}
+
+
+def save_user_settings(config: AppConfig, payload: dict[str, Any]) -> dict[str, Any]:
+    ensure_schema(config)
+    now = timestamp()
+    user_email = str(payload["user_email"])
+    existing = get_user_settings(config, user_email)
+    created_at = existing.get("created_at") if existing else now
+    excluded_boards = payload.get("excluded_boards") or []
+    with connect(config) as conn:
+        execute(
+            conn,
+            """
+            INSERT INTO user_settings (
+                user_email, board_exclusion_enabled, excluded_boards_json, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(user_email) DO UPDATE SET
+                board_exclusion_enabled = excluded.board_exclusion_enabled,
+                excluded_boards_json = excluded.excluded_boards_json,
+                updated_at = excluded.updated_at
+            """,
+            (
+                user_email,
+                1 if payload.get("board_exclusion_enabled") else 0,
+                dump_json(excluded_boards),
+                created_at,
+                now,
+            ),
+        )
+    return get_user_settings(config, user_email)
 
 
 def save_strategy_experiment(config: AppConfig, payload: dict[str, Any]) -> dict[str, Any]:
@@ -397,6 +445,16 @@ def outcome_row(row: Any) -> dict[str, Any]:
         "avg_close_return": float(row_value(row, "avg_close_return") or 0),
         "avg_max_drawdown": float(row_value(row, "avg_max_drawdown") or 0),
         "summary": load_json(row_value(row, "summary_json"), {}),
+        "created_at": str(row_value(row, "created_at") or ""),
+        "updated_at": str(row_value(row, "updated_at") or ""),
+    }
+
+
+def user_settings_row(row: Any) -> dict[str, Any]:
+    return {
+        "user_email": str(row_value(row, "user_email")),
+        "board_exclusion_enabled": bool(row_value(row, "board_exclusion_enabled")),
+        "excluded_boards": load_json(row_value(row, "excluded_boards_json"), []),
         "created_at": str(row_value(row, "created_at") or ""),
         "updated_at": str(row_value(row, "updated_at") or ""),
     }
