@@ -49,28 +49,31 @@ http://127.0.0.1:8000
 
 ## 部署
 
-当前推荐用 Render Docker Web Service 部署整套服务，数据库推荐用 Neon Free Postgres。原因是本项目不是纯静态站点：FastAPI 后端需要 AkShare/pandas，并且策略学习库必须长期持久化。Vercel/Void 更适合前端或对应平台运行时；这版用单容器能让前端和 `/api` 同源运行。
+当前推荐用 Vercel 部署应用服务，数据库推荐用 Neon Free Postgres。这个组合不需要在代码里保存密钥，也能满足“不绑定付款方式优先”的部署目标；Vercel 承载 FastAPI + Vite 同源应用，Neon 承载长期策略学习库。
 
 详细部署操作见 `DEPLOYMENT.md`。
 
 仓库已包含：
 
+- `server.py`：Vercel FastAPI 入口，导入 `backend/app/main.py` 中的 `app`。
+- `requirements.txt`：Vercel Python Runtime 安装后端依赖。
+- `vercel.json`：构建 Vite 前端，并把所有路由交给 FastAPI 同源托管。
+- `.vercelignore`：排除本地缓存、虚拟环境、node_modules 和运行数据。
 - `Dockerfile`：构建 Vite 前端，并由 FastAPI 同源托管静态产物。
-- `render.yaml`：Render Blueprint，使用 Docker runtime、Free plan、`/api/health` 健康检查。
+- `render.yaml`：Render 可选部署配置；当前不作为默认路径。
 - `STOCK_LAB_DATA_DIR`：可把行情缓存和报告目录切到云平台运行目录，默认本地 `data/`。
 - `STOCK_LAB_DATABASE_URL`：策略学习库连接串。不配置时使用 `data/stock_lab.sqlite3`；线上建议填 Neon/Supabase 的 Postgres URL。
 - `STOCK_LAB_AI_COMMAND`：可选外部大模型命令。系统会把受控 JSON payload 写入 stdin，并使用命令 stdout 作为解释文本。
 
-Render 部署流程：
+Vercel 部署流程：
 
-1. 把仓库推到 GitHub/GitLab/Bitbucket。
-2. 在 Render 创建 Blueprint 或 Docker Web Service，选择本仓库。
-3. 确认 `render.yaml` 使用 `runtime: docker` 和 `plan: free`。
-4. 在 Neon 创建免费 Postgres 数据库，复制 pooled connection string。
-5. 在 Render 环境变量里填入 `STOCK_LAB_DATABASE_URL=postgresql://...`。
-6. 部署完成后访问 Render 分配的 `https://*.onrender.com` 地址。
+1. 把仓库推到 GitHub。
+2. 在 Neon 创建免费 Postgres 数据库，复制 pooled connection string。
+3. 用 Vercel CLI 或 Dashboard 导入本仓库。
+4. 在 Vercel 环境变量里填入 `STOCK_LAB_DATABASE_URL=postgresql://...`。
+5. 部署完成后访问 Vercel 分配的 `https://*.vercel.app` 地址。
 
-免费实例适合演示和测试。Render Free Web Service 不能保留本地文件系统改动，所以长期学习记忆不要依赖 `/data`；应使用 `STOCK_LAB_DATABASE_URL` 指向外部数据库。
+Vercel 的本地文件系统是临时的。未配置 `STOCK_LAB_DATABASE_URL` 时，应用仍可启动并使用 `/tmp/stock-opportunity-lab/stock_lab.sqlite3` 做临时演示；但长期学习记忆、策略实验链和用户反馈必须使用外部 Postgres。
 
 ## 数据库
 

@@ -11,7 +11,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 def default_data_dir() -> Path:
     override = os.getenv("STOCK_LAB_DATA_DIR")
-    return Path(override).expanduser() if override else PROJECT_ROOT / "data"
+    if override:
+        return Path(override).expanduser()
+    if os.getenv("VERCEL"):
+        return Path("/tmp/stock-opportunity-lab")
+    return PROJECT_ROOT / "data"
 
 
 def default_database_url() -> str | None:

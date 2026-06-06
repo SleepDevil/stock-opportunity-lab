@@ -1,31 +1,34 @@
 # 部署手册
 
-这份手册用于把 Stock Opportunity Lab 部署到免费或低成本云环境。当前推荐组合是：
+这份手册用于把 Stock Opportunity Lab 部署到免费云环境。当前推荐组合是：
 
-- 应用服务：Render Docker Web Service
+- 应用服务：Vercel
 - 数据库：Neon Free Postgres
-- 代码来源：GitHub/GitLab/Bitbucket 仓库
+- 代码来源：GitHub 仓库
 
-选择这个组合的原因：本项目不是纯前端静态站点，后端依赖 FastAPI、AkShare、pandas，并且策略学习库需要长期持久化。Render 可以用仓库根目录的 `render.yaml` 创建 Docker Web Service；Neon 提供 serverless Postgres、连接池和免费计划，适合先跑演示、回测学习库和小规模自用。
+选择这个组合的原因：用户底线是不绑定付款方式；Render Blueprint 在当前账号下会要求补充 payment method，因此默认路径切换为 Vercel。Vercel 官方 FastAPI 文档支持根目录 `server.py` 暴露 `FastAPI` 实例；本仓库用 `server.py` 导入后端应用，并让 FastAPI 同源托管 `frontend/dist`。
 
 参考官方文档：
 
-- Render Blueprint: https://render.com/docs/infrastructure-as-code
-- Render Blueprint YAML: https://render.com/docs/blueprint-spec
-- Render CLI: https://render.com/docs/cli
-- Render Health Checks: https://render.com/docs/health-checks
-- Neon 连接文档: https://neon.com/docs/get-started/connect-neon
+- Vercel FastAPI: https://vercel.com/docs/frameworks/backend/fastapi
+- Vercel Python Runtime: https://vercel.com/docs/functions/runtimes/python
+- Vercel Project Configuration: https://vercel.com/docs/project-configuration
+- Vercel Function Duration: https://vercel.com/docs/functions/configuring-functions/duration
+- Neon 连接文档: https://neon.com/docs/get-started-with-neon/connect-neon
 - Neon Pricing: https://neon.com/pricing
 
 ## 当前仓库已经准备好的内容
 
-- `Dockerfile`：构建 Vite 前端，并由 FastAPI 同源托管 `frontend/dist`。
-- `render.yaml`：定义 Render Web Service，使用 Docker runtime、Free plan、`/api/health` 健康检查。
-- `.dockerignore`：减少 Docker build context。
+- `server.py`：Vercel FastAPI 入口，导入 `backend/app/main.py` 里的 `app`。
+- `requirements.txt`：Vercel Python Runtime 安装 FastAPI、pandas、AkShare、psycopg 等后端依赖。
+- `vercel.json`：执行 `npm --prefix frontend ci && npm --prefix frontend run build`，并把所有请求重写到 `server.py`。
+- `.vercelignore`：排除 `.venv`、`node_modules`、`data`、`artifacts` 等无需上传的本地文件。
 - `STOCK_LAB_DATABASE_URL`：线上策略学习库连接串，建议指向 Neon Postgres。
-- `STOCK_LAB_DATA_DIR`：行情缓存和报告目录。Render 免费实例文件系统不适合长期保存状态，所以长期记忆必须依赖数据库。
+- `STOCK_LAB_DATA_DIR`：行情缓存和报告目录。Vercel 默认使用 `/tmp/stock-opportunity-lab`。
 
-## 你需要先操作的事情
+Docker/Render 配置仍保留，作为以后愿意绑定付款方式或迁移到容器平台时的可选方案。
+
+## 你需要准备的事情
 
 ### 1. 准备 Neon 数据库
 
@@ -51,85 +54,71 @@ postgresql://USER:PASSWORD@HOST.neon.tech/DB?sslmode=require
 &sslmode=require
 ```
 
-### 2. 准备 Render 登录
+`STOCK_LAB_DATABASE_URL` 不能提交到仓库，只能放在 Vercel 环境变量中。
 
-本机已经检测到 Render CLI：
+### 2. 准备 Vercel 登录
 
-```bash
-~/.local/bin/render --version
-```
-
-但当前还没有登录。请在终端运行：
+本地可以使用 Vercel CLI：
 
 ```bash
-~/.local/bin/render login
+npx vercel@latest login
 ```
 
-它会打开浏览器让你授权。登录完成后，再运行：
+登录完成后，可以验证：
 
 ```bash
-~/.local/bin/render workspaces --output json
+npx vercel@latest whoami
 ```
 
-如果能看到 workspace 列表，就把结果告诉我，或直接告诉我“Render 登录好了”。
+如果 CLI 要求浏览器授权，请在浏览器里完成登录后回到终端。
 
-如果你有多个 workspace，请选择要部署到哪个 workspace。CLI 设置方式是：
+## Vercel CLI 部署方式
+
+仓库根目录运行：
 
 ```bash
-~/.local/bin/render workspace set <WORKSPACE_ID>
+npx vercel@latest --prod --yes
 ```
 
-### 3. 确认代码已推到 Git 服务
+首次部署时，Vercel CLI 会把本地目录链接为一个 Vercel project。项目名可以使用：
 
-Render Blueprint 需要从 GitHub/GitLab/Bitbucket 读取仓库。请确保当前代码已经推到你准备用于部署的远程仓库和分支。
+```text
+stock-opportunity-lab
+```
 
-如果你希望我来整理 commit，请告诉我；我会按本仓库的 Lore Commit Protocol 写提交信息。
+部署前或部署后都可以设置数据库环境变量：
 
-## Render Dashboard 部署方式
+```bash
+npx vercel@latest env add STOCK_LAB_DATABASE_URL production
+```
 
-这是最稳的路径，适合第一次部署：
+按提示粘贴 Neon pooled connection string。设置后需要重新部署一次：
 
-1. 打开 https://dashboard.render.com 并登录。
-2. 点击 `New`，选择 `Blueprint`。
-3. 连接当前项目所在的 GitHub/GitLab/Bitbucket 仓库。
-4. 选择包含 `render.yaml` 的分支。
-5. Blueprint Path 保持默认 `render.yaml`。
-6. Render 会识别一个名为 `stock-opportunity-lab` 的 Docker Web Service。
-7. 在环境变量里填写：
+```bash
+npx vercel@latest --prod --yes
+```
+
+如果只是先验证公网可访问，未配置数据库也可以部署；应用会临时使用 `/tmp/stock-opportunity-lab/stock_lab.sqlite3`，但这种数据不会长期保留。
+
+## Vercel Dashboard 部署方式
+
+1. 打开 https://vercel.com/dashboard 并登录。
+2. 点击 `Add New` -> `Project`。
+3. 导入 `SleepDevil/stock-opportunity-lab`。
+4. Framework Preset 保持自动识别或选择 Other。
+5. Build Command 使用仓库里的 `vercel.json`，即：
+
+```bash
+npm --prefix frontend ci && npm --prefix frontend run build
+```
+
+6. 在 Environment Variables 添加：
 
 ```text
 STOCK_LAB_DATABASE_URL=<你的 Neon pooled connection string>
-STOCK_LAB_DATA_DIR=/data
-PYTHONUNBUFFERED=1
 ```
 
-`STOCK_LAB_DATABASE_URL` 不要提交到代码里，只放在 Render 环境变量中。
-
-8. 点击 Deploy Blueprint。
-9. 等待构建完成后，打开 Render 分配的 `https://*.onrender.com` 地址。
-
-## 登录后我可以继续执行的命令
-
-登录 Render 后，我可以继续做这些非破坏性检查：
-
-```bash
-~/.local/bin/render workspaces --output json
-~/.local/bin/render workspace current --output json
-~/.local/bin/render blueprints validate ./render.yaml --output json
-```
-
-如果你已经在 Dashboard 创建了服务，我还可以继续查服务和部署状态：
-
-```bash
-~/.local/bin/render services --output json
-~/.local/bin/render deploys list <SERVICE_ID> --output json
-```
-
-如果你确认要触发重新部署，我会在你明确说“可以触发部署”后运行：
-
-```bash
-~/.local/bin/render deploys create <SERVICE_ID> --wait --output json
-```
+7. 点击 Deploy。
 
 ## 部署后验收
 
@@ -169,93 +158,11 @@ export STOCK_LAB_AI_COMMAND="/app/scripts/stock-lab-llm"
 - 大模型适合做解释、归因假设、复盘摘要、人工反馈结构化。
 - 大模型不应该直接宣称达到 80% 胜率，也不应该绕过实验链直接改策略。
 - 策略进化必须由数据库中的跨行情样本、baseline/proposed 对照、胜率、收益、回撤共同验证。
-- 线上接入大模型时，API key 只放在 Render 环境变量，不能写入仓库。
+- 线上接入大模型时，API key 只放在 Vercel 环境变量，不能写入仓库。
 - 如果使用第三方模型，需要控制 timeout、重试、成本上限和返回格式，避免一次盘后扫描被模型调用拖垮。
 
-## 当前阻塞点
+## 当前限制
 
-我现在能完成本地构建和静态检查，但不能替你完成以下认证步骤：
-
-- Render CLI 未登录，命令返回 `run render login to authenticate`。
-- Render Blueprint 校验需要先有 active workspace 或显式 workspace ID。
-- 如果 Blueprint 校验返回 `need_payment_info`，需要先在 Render Dashboard 的 workspace Billing 页面补充 payment method。Render 官方 Dashboard 文档说明 Billing 页面可用于更新 payment method 和查看用量。
-- Neon 数据库需要你登录后创建并复制连接串。
-- 本机未安装 Docker CLI，所以无法在本机直接构建镜像；Render 云端会根据 `Dockerfile` 构建。
-
-你完成 Render 登录和 Neon 连接串准备后，告诉我：
-
-```text
-Render 登录好了，Neon 连接串也准备好了
-```
-
-然后我会继续做 Blueprint 校验、部署状态检查和线上验收。
-
-## Render 登录 DNS 超时排查
-
-如果运行：
-
-```bash
-~/.local/bin/render login
-```
-
-报错：
-
-```text
-Error: Post "https://api.render.com/v1/device-grant": dial tcp: lookup api.render.com: i/o timeout
-```
-
-这通常不是账号问题，而是本机 DNS、VPN、代理或公司网络出口没有及时解析 `api.render.com`。
-
-先做三步检查：
-
-```bash
-dig +time=3 +tries=1 api.render.com
-nslookup api.render.com 1.1.1.1
-curl -Iv --connect-timeout 10 https://api.render.com/v1/device-grant
-```
-
-判断方式：
-
-- `dig` 或 `nslookup` 超时：优先处理 DNS/VPN/代理。
-- `curl` 能连上并返回 `HTTP/2 405` 且有 `allow: POST`：说明网络可达，可以重新运行 `render login`。
-- 浏览器也打不开 `https://dashboard.render.com`：切换网络或 VPN 后再试。
-
-macOS 上可尝试：
-
-```bash
-sudo dscacheutil -flushcache
-sudo killall -HUP mDNSResponder
-```
-
-如果你使用公司 VPN、Clash、Surge、Little Snitch、LuLu 等网络工具，先重启对应工具，或临时切换规则，让以下域名走可访问外网的线路：
-
-```text
-api.render.com
-dashboard.render.com
-render.com
-```
-
-如果 DNS 仍持续超时，可以临时把当前网络服务的 DNS 改成公共 DNS。先查看服务名：
-
-```bash
-networksetup -listallnetworkservices
-```
-
-如果服务名是 `Wi-Fi`：
-
-```bash
-networksetup -setdnsservers Wi-Fi 1.1.1.1 8.8.8.8
-```
-
-恢复自动 DNS：
-
-```bash
-networksetup -setdnsservers Wi-Fi Empty
-```
-
-网络恢复后再运行：
-
-```bash
-~/.local/bin/render login
-~/.local/bin/render workspaces --output json
-```
+- Vercel Functions 的文件系统是临时的，所以长期学习库必须配置 Neon 或其他外部 Postgres。
+- AkShare 全市场扫描可能接近云函数耗时上限；这版先支持公网演示和轻量使用，后续如果要稳定跑每日盘后任务，应把扫描任务迁到定时任务/队列或容器服务。
+- 如果 Vercel 构建提示 Python bundle 超过限制，需要把 AkShare 采集层拆到独立 worker，Web 应用只保留报告查询和学习库能力。

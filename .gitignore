@@ -27,3 +27,4 @@ data/learning/*.json
 data/*.sqlite3
 data/*.sqlite3-*
 data/settings.json
+.vercel
