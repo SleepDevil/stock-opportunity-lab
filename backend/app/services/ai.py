@@ -19,6 +19,7 @@ def build_payload(
     actual_date: str | None = None,
     backtest_rows: pd.DataFrame | None = None,
     backtest_summary: dict[str, Any] | None = None,
+    learning_summary: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "task": "A-share rule-based opportunity explanation",
@@ -40,6 +41,8 @@ def build_payload(
         payload["actual_date"] = actual_date
         payload["backtest_summary"] = backtest_summary or {}
         payload["backtest_rows"] = json_records(backtest_rows)
+    if learning_summary:
+        payload["learning_summary"] = learning_summary
     return payload
 
 
@@ -74,12 +77,14 @@ def deterministic_explanation(payload: dict[str, Any]) -> str:
         "重点候选：",
     ]
     for row in candidates[:5]:
+        learning_hint = row.get("学习提示")
+        learning_text = f"学习提示：{learning_hint}" if learning_hint else "学习样本不足。"
         lines.append(
             f"- {row.get('代码')} {row.get('名称')}：score {row.get('score')}，"
             f"成交额 {format_money(row.get('成交额'))}，换手率 {row.get('换手率')}%，"
             f"量比 {row.get('量比')}，标签 {row.get('机会标签')}。"
             f"次日计划区间 {row.get('计划低吸价')}-{row.get('计划买入上限')}，"
-            f"高开超过 {row.get('高开放弃价')} 放弃追价。"
+            f"高开超过 {row.get('高开放弃价')} 放弃追价。{learning_text}"
         )
     summary = payload.get("backtest_summary")
     if summary:
@@ -91,6 +96,30 @@ def deterministic_explanation(payload: dict[str, Any]) -> str:
                 f"- 平均盘中最大回撤 {summary.get('avg_max_drawdown')}%，说明次日执行还需要严格控制高开和止损条件。",
             ]
         )
+    learning = payload.get("learning_summary")
+    if learning:
+        failure_reasons = ", ".join(
+            f"{item.get('reason')}({item.get('count')})"
+            for item in learning.get("top_failure_reasons", [])[:3]
+            if item.get("reason")
+        )
+        success_reasons = ", ".join(
+            f"{item.get('reason')}({item.get('count')})"
+            for item in learning.get("top_success_reasons", [])[:3]
+            if item.get("reason")
+        )
+        lines.extend(
+            [
+                "",
+                "策略记忆：",
+                f"- 已沉淀 {learning.get('total_cases', 0)} 条验证样本，买入样本胜率 {learning.get('buy_win_rate', 0)}%，平均买入收益 {learning.get('avg_buy_return', 0)}%。",
+                f"- 常见成功原因：{success_reasons or '样本不足'}。",
+                f"- 常见失败/未触发原因：{failure_reasons or '样本不足'}。",
+            ]
+        )
+        insights = learning.get("strategy_insights") or {}
+        if insights.get("recommendations"):
+            lines.append(f"- 距离 80% 目标还差 {insights.get('win_rate_gap', 0)} 个百分点；下一步：{insights['recommendations'][0]}")
     lines.extend(
         [
             "",
@@ -98,4 +127,3 @@ def deterministic_explanation(payload: dict[str, Any]) -> str:
         ]
     )
     return "\n".join(lines)
-

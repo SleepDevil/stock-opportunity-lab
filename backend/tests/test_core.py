@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import os
 from datetime import date, datetime
+
+import pandas as pd
 
 from app.config import AppConfig, ScreenConfig
 from app.models import ScreenRequest
@@ -26,6 +29,35 @@ from app.services.screener import classify_board, load_screen_targets, run_scree
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def test_app_config_allows_data_dir_override(tmp_path: Path, monkeypatch) -> None:
+    target = tmp_path / "cloud-data"
+    monkeypatch.setenv("STOCK_LAB_DATA_DIR", str(target))
+
+    config = AppConfig()
+
+    assert config.data_dir == target
+    assert config.raw_dir == target / "raw"
+    assert config.reports_dir == target / "reports"
+
+
+def test_frontend_static_path_resolves_spa_and_assets(tmp_path: Path) -> None:
+    from app.main import frontend_response_path
+
+    dist = tmp_path / "dist"
+    assets = dist / "assets"
+    assets.mkdir(parents=True)
+    index = dist / "index.html"
+    asset = assets / "app.js"
+    index.write_text("<div id=\"root\"></div>", encoding="utf-8")
+    asset.write_text("console.log('ok')", encoding="utf-8")
+
+    assert frontend_response_path("", dist) == index
+    assert frontend_response_path("backtest", dist) == index
+    assert frontend_response_path("assets/app.js", dist) == asset
+    assert frontend_response_path("api/health", dist) is None
+    assert frontend_response_path("../backend/app/main.py", dist) == index
 
 
 def test_screen_and_backtest_csv_flow(tmp_path: Path) -> None:
@@ -71,6 +103,504 @@ def test_backtest_generates_missing_screen_report(tmp_path: Path) -> None:
     assert backtest.summary["candidate_count"] == 2
     assert (config.reports_dir / "screen_20260602.csv").exists()
     assert (config.reports_dir / "screen_targets_20260602.csv").exists()
+
+
+def test_backtest_persists_learning_memory(tmp_path: Path) -> None:
+    from app.services.learning import read_learning_records
+    from app.services.learning_store import learning_database_path
+
+    config = AppConfig(data_dir=tmp_path, screen=ScreenConfig(max_candidates=5))
+    provider = CsvProvider(
+        spot_csv=FIXTURES / "spot_20260602.csv",
+        history_dir=FIXTURES / "history",
+    )
+
+    backtest = run_backtest(provider, config, "20260602", "20260603", refresh=False)
+
+    assert backtest.learning_summary["total_cases"] == 2
+    assert backtest.learning_summary["buy_cases"] == 1
+    assert backtest.learning_summary["winning_buys"] == 1
+    assert backtest.learning_summary["buy_win_rate"] == 100.0
+    assert backtest.learning_summary["top_failure_reasons"][0]["reason"] == "高开超阈值放弃"
+    assert backtest.learning_summary["top_success_reasons"][0]["reason"] == "收盘浮盈为正"
+    assert backtest.learning_summary["strategy_insights"]["target_win_rate"] == 80.0
+    assert backtest.learning_summary["strategy_insights"]["win_rate_gap"] == 0
+    assert learning_database_path(config).exists()
+    records = read_learning_records(config)
+    assert sorted(records) == ["20260602:20260603:000001", "20260602:20260603:300001"]
+    assert records["20260602:20260603:000001"]["outcome"] == "win"
+    assert records["20260602:20260603:300001"]["outcome"] == "missed"
+
+
+def test_learning_memory_is_persisted_in_database(tmp_path: Path) -> None:
+    from app.services.learning import read_learning_records
+    from app.services.learning_store import learning_database_path
+
+    config = AppConfig(data_dir=tmp_path, screen=ScreenConfig(max_candidates=5))
+    provider = CsvProvider(
+        spot_csv=FIXTURES / "spot_20260602.csv",
+        history_dir=FIXTURES / "history",
+    )
+
+    run_backtest(provider, config, "20260602", "20260603", refresh=False)
+
+    records = read_learning_records(config)
+    assert learning_database_path(config).exists()
+    assert sorted(records) == ["20260602:20260603:000001", "20260602:20260603:300001"]
+    assert records["20260602:20260603:000001"]["outcome"] == "win"
+    assert records["20260602:20260603:300001"]["outcome"] == "missed"
+
+
+def test_learning_store_imports_legacy_json_once(tmp_path: Path) -> None:
+    from app.services.learning import read_learning_records
+    from app.services.learning_store import learning_database_path
+
+    config = AppConfig(data_dir=tmp_path)
+    legacy_dir = tmp_path / "learning"
+    legacy_dir.mkdir(parents=True)
+    (legacy_dir / "records.json").write_text(
+        json.dumps(
+            {
+                "legacy-win": {
+                    "id": "legacy-win",
+                    "screen_date": "20260601",
+                    "actual_date": "20260602",
+                    "code": "000001",
+                    "name": "平安银行",
+                    "entry_triggered": True,
+                    "outcome": "win",
+                    "close_return_pct": 2.5,
+                    "system_reasons": ["收盘浮盈为正"],
+                    "features": {"board_code": "main", "tag": "趋势增强"},
+                    "user_notes": [{"author": "trader", "note": "旧 JSON 复盘", "created_at": "2026-06-02T00:00:00+00:00"}],
+                    "created_at": "2026-06-02T00:00:00+00:00",
+                    "updated_at": "2026-06-02T00:00:00+00:00",
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    records = read_learning_records(config)
+
+    assert learning_database_path(config).exists()
+    assert records["legacy-win"]["user_notes"][0]["note"] == "旧 JSON 复盘"
+    assert read_learning_records(config) == records
+
+
+def test_learning_feedback_updates_record_and_summary(tmp_path: Path, monkeypatch) -> None:
+    from app import main
+    from app.models import LearningFeedbackRequest
+
+    config = AppConfig(data_dir=tmp_path, screen=ScreenConfig(max_candidates=5))
+    provider = CsvProvider(
+        spot_csv=FIXTURES / "spot_20260602.csv",
+        history_dir=FIXTURES / "history",
+    )
+    run_backtest(provider, config, "20260602", "20260603", refresh=False)
+    monkeypatch.setattr(main, "CONFIG", config)
+
+    response = main.learning_feedback(
+        LearningFeedbackRequest(
+            screen_date="20260602",
+            actual_date="20260603",
+            code="300001",
+            note="用户复盘：高开虽然符合强势，但换手回落且未给低吸点，后续应降低追突破权重。",
+            author="trader",
+        )
+    )
+    summary = main.learning_summary()
+
+    assert response.record["code"] == "300001"
+    assert response.record["user_notes"][0]["author"] == "trader"
+    assert "降低追突破权重" in response.record["user_notes"][0]["note"]
+    assert summary.user_feedback_count == 1
+    assert "降低追突破权重" in summary.recent_records[0]["user_notes"][0]["note"]
+
+    rerun = run_backtest(provider, config, "20260602", "20260603", refresh=False)
+
+    assert rerun.learning_summary["user_feedback_count"] == 1
+    assert "降低追突破权重" in rerun.learning_summary["recent_records"][0]["user_notes"][0]["note"]
+
+
+def test_learning_record_parses_chinese_boolean_fields() -> None:
+    from app.services.learning import build_learning_record
+
+    record = build_learning_record(
+        pd.Series(
+            {
+                "代码": "1",
+                "名称": "平安银行",
+                "是否买入": "否",
+                "买入方式": "未触发计划价格",
+                "收盘浮盈%": None,
+                "盘中最大回撤%": None,
+                "盘中触及止损": "否",
+                "盘中触及止盈": "否",
+                "收盘站上计划上限": "否",
+            }
+        ),
+        "20260602",
+        "20260603",
+    )
+
+    assert record["entry_triggered"] is False
+    assert record["outcome"] == "missed"
+    assert record["touched_stop_loss"] is False
+    assert record["touched_take_profit"] is False
+    assert record["closed_above_plan_high"] is False
+
+
+def test_ai_payload_includes_learning_summary(tmp_path: Path) -> None:
+    from app.services.ai import build_payload, deterministic_explanation
+    from app.services.learning import load_learning_summary
+
+    config = AppConfig(data_dir=tmp_path, screen=ScreenConfig(max_candidates=5))
+    provider = CsvProvider(
+        spot_csv=FIXTURES / "spot_20260602.csv",
+        history_dir=FIXTURES / "history",
+    )
+    backtest = run_backtest(provider, config, "20260602", "20260603", refresh=False)
+    learning_summary = load_learning_summary(config)
+
+    payload = build_payload(
+        config,
+        backtest.screen_date,
+        backtest.rows,
+        actual_date=backtest.actual_date,
+        backtest_rows=backtest.rows,
+        backtest_summary=backtest.summary,
+        learning_summary=learning_summary,
+    )
+    explanation = deterministic_explanation(payload)
+
+    assert payload["learning_summary"]["total_cases"] == 2
+    assert payload["learning_summary"]["buy_win_rate"] == 100.0
+    assert "策略记忆" in explanation
+
+
+def test_screen_uses_learning_memory_to_annotate_future_candidates(tmp_path: Path) -> None:
+    from app.services.learning import write_learning_records
+
+    config = AppConfig(data_dir=tmp_path, screen=ScreenConfig(max_candidates=5))
+    write_learning_records(
+        config,
+        {
+            "old-main-win-1": {
+                "id": "old-main-win-1",
+                "entry_triggered": True,
+                "outcome": "win",
+                "close_return_pct": 4.0,
+                "features": {"board_code": "main", "tag": "换手充分 / 趋势增强"},
+                "system_reasons": ["收盘浮盈为正"],
+                "user_notes": [],
+                "updated_at": "2026-06-01T00:00:00+00:00",
+            },
+            "old-main-win-2": {
+                "id": "old-main-win-2",
+                "entry_triggered": True,
+                "outcome": "win",
+                "close_return_pct": 2.0,
+                "features": {"board_code": "main", "tag": "换手充分 / 趋势增强"},
+                "system_reasons": ["收盘浮盈为正"],
+                "user_notes": [],
+                "updated_at": "2026-06-02T00:00:00+00:00",
+            },
+            "old-main-loss": {
+                "id": "old-main-loss",
+                "entry_triggered": True,
+                "outcome": "loss",
+                "close_return_pct": -1.0,
+                "features": {"board_code": "main", "tag": "换手充分 / 趋势增强"},
+                "system_reasons": ["收盘浮盈为负"],
+                "user_notes": [],
+                "updated_at": "2026-06-03T00:00:00+00:00",
+            },
+            "old-startup-loss-1": {
+                "id": "old-startup-loss-1",
+                "entry_triggered": True,
+                "outcome": "loss",
+                "close_return_pct": -4.0,
+                "features": {"board_code": "startup", "tag": "明显放量 / 中期强势"},
+                "system_reasons": ["收盘浮盈为负"],
+                "user_notes": [],
+                "updated_at": "2026-06-03T00:00:00+00:00",
+            },
+            "old-startup-loss-2": {
+                "id": "old-startup-loss-2",
+                "entry_triggered": True,
+                "outcome": "loss",
+                "close_return_pct": -3.0,
+                "features": {"board_code": "startup", "tag": "明显放量 / 中期强势"},
+                "system_reasons": ["收盘浮盈为负"],
+                "user_notes": [],
+                "updated_at": "2026-06-04T00:00:00+00:00",
+            },
+        },
+    )
+    provider = CsvProvider(
+        spot_csv=FIXTURES / "spot_20260602.csv",
+        history_dir=FIXTURES / "history",
+    )
+
+    screen = run_screen(provider, config, "20260602", refresh=False, limit=None, enrich=False)
+    main_row = screen.candidates[screen.candidates["代码"] == "000001"].iloc[0]
+    startup_row = screen.candidates[screen.candidates["代码"] == "300001"].iloc[0]
+
+    assert main_row["学习样本数"] == 3
+    assert main_row["学习胜率%"] == 66.67
+    assert main_row["学习平均收益%"] == 1.67
+    assert main_row["学习动作"] == "优先跟踪"
+    assert "相似样本胜率 66.67%" in main_row["学习提示"]
+    assert startup_row["学习样本数"] == 2
+    assert startup_row["学习胜率%"] == 0.0
+    assert startup_row["学习动作"] == "降低优先级"
+
+
+def test_strategy_optimizer_proposes_conservative_parameter_experiment(tmp_path: Path) -> None:
+    from app.services.learning import write_learning_records
+    from app.services.learning_store import list_strategy_experiments
+    from app.services.strategy_optimizer import build_strategy_optimization
+
+    config = AppConfig(data_dir=tmp_path)
+    write_learning_records(
+        config,
+        {
+            f"loss-{index}": {
+                "id": f"loss-{index}",
+                "entry_triggered": True,
+                "outcome": "loss",
+                "close_return_pct": -3.0 - index,
+                "max_drawdown_pct": -6.0 - index,
+                "system_reasons": ["收盘浮盈为负", "盘中触及止损"],
+                "features": {"board_code": "main", "tag": "高成交额 / 趋势增强"},
+                "user_notes": [],
+                "updated_at": f"2026-06-0{index + 1}T00:00:00+00:00",
+            }
+            for index in range(4)
+        }
+        | {
+            "win-1": {
+                "id": "win-1",
+                "entry_triggered": True,
+                "outcome": "win",
+                "close_return_pct": 1.5,
+                "max_drawdown_pct": -1.0,
+                "system_reasons": ["收盘浮盈为正"],
+                "features": {"board_code": "main", "tag": "高成交额 / 趋势增强"},
+                "user_notes": [],
+                "updated_at": "2026-06-05T00:00:00+00:00",
+            }
+        },
+    )
+
+    result = build_strategy_optimization(config)
+
+    assert result["target_win_rate"] == 80.0
+    assert result["current_metrics"]["buy_win_rate"] == 20.0
+    assert result["proposed_strategy"]["stop_loss"] < config.strategy.stop_loss
+    assert result["proposed_strategy"]["risk_per_trade_pct"] < config.strategy.risk_per_trade_pct
+    assert result["parameter_changes"][0]["parameter"] == "stop_loss"
+    assert "盘中触及止损" in result["parameter_changes"][0]["reason"]
+    assert result["experiment_plan"][0]["status"] == "paper"
+    assert result["experiment"]["id"]
+    assert result["experiment"]["status"] == "paper"
+    assert result["experiment_history"][0]["id"] == result["experiment"]["id"]
+
+    rerun = build_strategy_optimization(config)
+
+    experiments = list_strategy_experiments(config)
+    assert rerun["experiment"]["id"] == result["experiment"]["id"]
+    assert len(experiments) == 1
+
+
+def test_backtest_records_strategy_experiment_ab_outcomes(tmp_path: Path) -> None:
+    from app.services.learning import write_learning_records
+    from app.services.learning_store import list_strategy_experiment_outcomes
+    from app.services.strategy_optimizer import build_strategy_optimization
+
+    config = AppConfig(data_dir=tmp_path, screen=ScreenConfig(max_candidates=5))
+    provider = CsvProvider(
+        spot_csv=FIXTURES / "spot_20260602.csv",
+        history_dir=FIXTURES / "history",
+    )
+    write_learning_records(
+        config,
+        {
+            f"loss-{index}": {
+                "id": f"loss-{index}",
+                "entry_triggered": True,
+                "outcome": "loss",
+                "close_return_pct": -3.0 - index,
+                "max_drawdown_pct": -6.0 - index,
+                "system_reasons": ["收盘浮盈为负", "盘中触及止损"],
+                "features": {"board_code": "main", "tag": "高成交额 / 趋势增强"},
+                "user_notes": [],
+                "updated_at": f"2026-06-0{index + 1}T00:00:00+00:00",
+            }
+            for index in range(4)
+        },
+    )
+    experiment = build_strategy_optimization(config)["experiment"]
+    run_screen(provider, config, "20260602", refresh=False, limit=None, enrich=False)
+
+    run_backtest(provider, config, "20260602", "20260603", refresh=False)
+
+    outcomes = list_strategy_experiment_outcomes(config, experiment["id"])
+    variants = {outcome["variant"]: outcome for outcome in outcomes}
+    assert sorted(variants) == ["baseline", "proposed"]
+    assert variants["baseline"]["screen_date"] == "20260602"
+    assert variants["proposed"]["actual_date"] == "20260603"
+    assert variants["baseline"]["buy_win_rate"] == 100.0
+    assert variants["proposed"]["candidate_count"] == 2
+
+
+def test_strategy_optimization_api_returns_response_model(tmp_path: Path, monkeypatch) -> None:
+    from app import main
+    from app.services.learning import write_learning_records
+
+    config = AppConfig(data_dir=tmp_path)
+    write_learning_records(
+        config,
+        {
+            "loss-1": {
+                "id": "loss-1",
+                "entry_triggered": True,
+                "outcome": "loss",
+                "close_return_pct": -5.0,
+                "max_drawdown_pct": -7.0,
+                "system_reasons": ["收盘浮盈为负", "盘中触及止损"],
+                "features": {"board_code": "main", "tag": "趋势增强"},
+                "user_notes": [],
+                "updated_at": "2026-06-05T00:00:00+00:00",
+            }
+        },
+    )
+    monkeypatch.setattr(main, "CONFIG", config)
+
+    response = main.strategy_optimization()
+
+    assert response.target_win_rate == 80.0
+    assert response.current_strategy["stop_loss"] == config.strategy.stop_loss
+    assert response.proposed_strategy["stop_loss"] < config.strategy.stop_loss
+    assert response.parameter_changes
+    assert response.experiment["id"]
+
+
+def test_wechat_source_article_is_saved_and_summarized(tmp_path: Path) -> None:
+    from app.services.wechat_knowledge import ingest_wechat_article, list_wechat_articles
+
+    config = AppConfig(data_dir=tmp_path)
+    html = """
+    <html>
+      <head>
+        <meta property="og:title" content="低空经济政策密集落地">
+      </head>
+      <body>
+        <script>var nickname = "21世纪经济报道"; var ct = "1780675200";</script>
+        <h1 id="activity-name">低空经济政策密集落地</h1>
+        <div id="js_name">21世纪经济报道</div>
+        <div id="js_content">
+          低空经济政策密集落地，产业链公司订单增长。机构认为，eVTOL、空管系统和基础设施建设将受益。
+          风险在于商业化节奏、监管审批和估值波动。A股相关公司短线涨幅较大，需关注业绩兑现。
+        </div>
+      </body>
+    </html>
+    """
+
+    article = ingest_wechat_article(
+        config,
+        source_name="21世纪经济报道",
+        article_url="https://mp.weixin.qq.com/s/aPgU_HtBTNUrqoyrBVxgkA",
+        html=html,
+    )
+
+    assert article["source_name"] == "21世纪经济报道"
+    assert article["title"] == "低空经济政策密集落地"
+    assert article["knowledge"]["tags"][:2] == ["低空经济", "eVTOL"]
+    assert article["knowledge"]["market_relevance"] == "high"
+    assert "监管审批" in " ".join(article["knowledge"]["risks"])
+    assert list_wechat_articles(config)[0]["id"] == article["id"]
+
+
+def test_wechat_subscription_api_ingests_manual_article(tmp_path: Path, monkeypatch) -> None:
+    from app import main
+    from app.models import WechatArticleIngestRequest, WechatSubscriptionRequest
+
+    config = AppConfig(data_dir=tmp_path)
+    monkeypatch.setattr(main, "CONFIG", config)
+
+    subscription = main.create_wechat_subscription(
+        WechatSubscriptionRequest(
+            source_name="21世纪经济报道",
+            sample_url="https://mp.weixin.qq.com/s/aPgU_HtBTNUrqoyrBVxgkA",
+            feed_url=None,
+        )
+    )
+    article = main.ingest_wechat_article_api(
+        WechatArticleIngestRequest(
+            source_name="21世纪经济报道",
+            article_url="https://mp.weixin.qq.com/s/aPgU_HtBTNUrqoyrBVxgkA",
+            html='<h1 id="activity-name">市场风格切换</h1><div id="js_content">A股市场风格切换，红利资产和科技成长轮动。风险是成交缩量。</div>',
+        )
+    )
+    response = main.wechat_knowledge()
+
+    assert subscription.source_name == "21世纪经济报道"
+    assert subscription.capability == "manual_or_feed"
+    assert article.title == "市场风格切换"
+    assert response.subscriptions[0]["source_name"] == "21世纪经济报道"
+    assert response.articles[0]["knowledge"]["summary"]
+
+
+def test_evolution_cycle_reviews_latest_prior_screen_and_returns_optimizer(tmp_path: Path) -> None:
+    from app.services.evolution import run_evolution_cycle
+
+    config = AppConfig(data_dir=tmp_path, screen=ScreenConfig(max_candidates=5))
+    provider = CsvProvider(
+        spot_csv=FIXTURES / "spot_20260602.csv",
+        history_dir=FIXTURES / "history",
+    )
+    run_screen(provider, config, "20260602", refresh=False, limit=None, enrich=False)
+
+    cycle = run_evolution_cycle(
+        provider=provider,
+        config=config,
+        actual_date="20260603",
+        refresh=False,
+    )
+
+    assert cycle.status == "completed"
+    assert cycle.screen_date == "20260602"
+    assert cycle.actual_date == "20260603"
+    assert cycle.backtest.summary["candidate_count"] == 2
+    assert cycle.learning_summary["total_cases"] == 2
+    assert cycle.strategy_optimization["target_win_rate"] == 80.0
+    assert "2026-06-02" in cycle.message
+    assert (config.data_dir / "stock_lab.sqlite3").exists()
+
+
+def test_evolution_cycle_api_returns_backtest_and_optimizer(tmp_path: Path, monkeypatch) -> None:
+    from app import main
+    from app.models import EvolutionCycleRequest
+
+    config = AppConfig(data_dir=tmp_path, screen=ScreenConfig(max_candidates=5))
+    csv_provider = CsvProvider(
+        spot_csv=FIXTURES / "spot_20260602.csv",
+        history_dir=FIXTURES / "history",
+    )
+    run_screen(csv_provider, config, "20260602", refresh=False, limit=None, enrich=False)
+    monkeypatch.setattr(main, "CONFIG", config)
+    monkeypatch.setattr(main, "provider", lambda: csv_provider)
+
+    response = main.evolution_cycle(EvolutionCycleRequest(actual_date="20260603", refresh=False))
+
+    assert response.status == "completed"
+    assert response.backtest.screen_date == "20260602"
+    assert response.backtest.learning_summary["total_cases"] == 2
+    assert response.strategy_optimization.target_win_rate == 80.0
+    assert "下一步" in response.message
 
 
 def test_stock_analysis_resolves_name_and_position(tmp_path: Path) -> None:

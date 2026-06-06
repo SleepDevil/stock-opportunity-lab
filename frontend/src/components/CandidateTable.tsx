@@ -1,4 +1,4 @@
-import { Badge, Button, Group, Paper, Progress, SimpleGrid, Skeleton, Stack, Text, ThemeIcon } from '@mantine/core';
+import { Badge, Button, Group, Paper, Progress, SimpleGrid, Skeleton, Stack, Text, ThemeIcon, Tooltip } from '@mantine/core';
 import { ArrowUpRight, CheckCircle2, CircleDollarSign, ShieldAlert, TrendingUp } from 'lucide-react';
 
 import type { Candidate, TrendPoint } from '../types/api';
@@ -49,6 +49,13 @@ export function CandidateTable({
             </Group>
             <Group gap={6} mt={7}>
               <Badge variant="light" color="blue" radius="sm">{row.机会标签}</Badge>
+              {row.学习动作 ? (
+                <Tooltip label={row.学习提示 || '暂无学习提示'} withArrow multiline maw={320} openDelay={250}>
+                  <Badge variant="light" color={learningActionColor(row.学习动作)} radius="sm">
+                    学习 {row.学习动作} · {row.学习样本数 ?? 0} 样本
+                  </Badge>
+                </Tooltip>
+              ) : null}
               {row.行业 ? <Badge variant="light" color="gray" radius="sm">{row.行业}</Badge> : null}
               <Badge variant="outline" color={row.排名 <= 3 ? 'teal' : 'gray'} radius="sm">仓位上限 {formatPct(row['单票仓位上限%'])}</Badge>
             </Group>
@@ -221,6 +228,19 @@ function boardColor(board?: string) {
   }
   if (board === 'main') {
     return 'teal';
+  }
+  return 'gray';
+}
+
+function learningActionColor(action?: string | null) {
+  if (action === '优先跟踪') {
+    return 'teal';
+  }
+  if (action === '降低优先级') {
+    return 'orange';
+  }
+  if (action === '按原策略观察') {
+    return 'blue';
   }
   return 'gray';
 }

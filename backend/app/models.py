@@ -21,6 +21,13 @@ class BacktestRequest(BaseModel):
     exclude_boards: list[str] = Field(default_factory=list)
 
 
+class EvolutionCycleRequest(BaseModel):
+    actual_date: str | None = None
+    screen_date: str | None = None
+    refresh: bool = False
+    exclude_boards: list[str] = Field(default_factory=list)
+
+
 class StockAnalysisRequest(BaseModel):
     query: str = Field(min_length=1, max_length=40)
     trade_date: str | None = None
@@ -185,9 +192,104 @@ class BacktestResponse(BaseModel):
     actual_date: str
     rows: list[dict[str, Any]]
     summary: dict[str, Any]
+    learning_summary: dict[str, Any] = Field(default_factory=dict)
     report_paths: dict[str, str]
     ai_payload: dict[str, Any]
     analysis: str
+
+
+class LearningSummary(BaseModel):
+    total_cases: int = 0
+    buy_cases: int = 0
+    winning_buys: int = 0
+    losing_buys: int = 0
+    missed_cases: int = 0
+    buy_win_rate: float = 0.0
+    avg_buy_return: float = 0.0
+    avg_max_drawdown: float = 0.0
+    user_feedback_count: int = 0
+    top_failure_reasons: list[dict[str, Any]] = Field(default_factory=list)
+    top_success_reasons: list[dict[str, Any]] = Field(default_factory=list)
+    strategy_insights: dict[str, Any] = Field(default_factory=dict)
+    recent_records: list[dict[str, Any]] = Field(default_factory=list)
+    updated_at: str | None = None
+
+
+class LearningFeedbackRequest(BaseModel):
+    screen_date: str
+    actual_date: str
+    code: str = Field(min_length=1, max_length=12)
+    note: str = Field(min_length=1, max_length=2000)
+    author: str | None = Field(default=None, max_length=80)
+
+
+class LearningFeedbackResponse(BaseModel):
+    record: dict[str, Any]
+    summary: LearningSummary
+
+
+class StrategyOptimizationResponse(BaseModel):
+    target_win_rate: float
+    current_metrics: dict[str, Any]
+    current_strategy: dict[str, Any]
+    proposed_strategy: dict[str, Any]
+    parameter_changes: list[dict[str, Any]]
+    experiment_plan: list[dict[str, Any]]
+    experiment: dict[str, Any] = Field(default_factory=dict)
+    experiment_history: list[dict[str, Any]] = Field(default_factory=list)
+    disclaimer: str
+
+
+class WechatSubscriptionRequest(BaseModel):
+    source_name: str = Field(min_length=1, max_length=120)
+    sample_url: str | None = Field(default=None, max_length=1200)
+    feed_url: str | None = Field(default=None, max_length=1200)
+
+
+class WechatArticleIngestRequest(BaseModel):
+    source_name: str = Field(min_length=1, max_length=120)
+    article_url: str = Field(min_length=1, max_length=1200)
+    html: str | None = Field(default=None, max_length=300_000)
+
+
+class WechatSubscriptionResponse(BaseModel):
+    id: str
+    source_name: str
+    sample_url: str | None = None
+    feed_url: str | None = None
+    capability: str
+    status: str
+    created_at: str
+    updated_at: str
+
+
+class WechatArticleResponse(BaseModel):
+    id: str
+    subscription_id: str
+    source_name: str
+    title: str
+    url: str
+    publish_time: str | None = None
+    content_text: str
+    knowledge: dict[str, Any]
+    created_at: str
+    updated_at: str
+
+
+class WechatKnowledgeResponse(BaseModel):
+    subscriptions: list[dict[str, Any]]
+    articles: list[dict[str, Any]]
+    capability_note: str
+
+
+class EvolutionCycleResponse(BaseModel):
+    status: Literal["completed"]
+    screen_date: str
+    actual_date: str
+    backtest: BacktestResponse
+    learning_summary: LearningSummary
+    strategy_optimization: StrategyOptimizationResponse
+    message: str
 
 
 class StockAnalysisResponse(BaseModel):

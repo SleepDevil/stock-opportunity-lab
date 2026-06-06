@@ -6,7 +6,7 @@
 
 - Frontend: React 19, Vite, TypeScript, Mantine, lucide-react
 - Backend: FastAPI, pandas, AkShare
-- Storage: 本地 CSV/JSON/Markdown 缓存，目录在 `data/`
+- Storage: SQLite/Postgres 学习库 + 本地 CSV/Markdown 行情和报告缓存，目录在 `data/`
 
 系统不连接券商账号，不保存交易凭证，不自动下单。
 
@@ -36,14 +36,82 @@ http://127.0.0.1:8000
 2. 查看候选股、分数、成交额、换手率、量比、市值、计划低吸价、买入上限、高开放弃价、止损参考价。
 3. 第二天盘后选择“选股日期”和“实际日期”，点击“运行回测”。
 4. 查看触发率、胜率、平均浮盈、最大回撤，以及每只股票为什么触发或没有触发。
-5. AI/规则解释区会展示受控分析：只能使用系统传入的指标和回测结果，不编造新闻或基本面。
+5. AI/规则解释区会展示受控分析：默认使用规则化解释；如配置 `STOCK_LAB_AI_COMMAND`，可把受控 JSON payload 交给外部大模型命令处理。
+6. “策略进化”会把回测样本、人工复盘、参数实验版本和 baseline/proposed 后续表现写入数据库，形成长期实验链。
 
 ## 产品与设计文档
 
 - 产品 PRD：`docs/prd/stock-opportunity-lab-prd.md`
+- 技术架构：`architecture.md`
 - Google Stitch 生成提示词：`docs/prompts/google-stitch-stock-opportunity-lab.md`
 - 设计结构树：`docs/design-tree/stock-opportunity-lab.md`
 - 设计契约：`DESIGN.md`
+
+## 部署
+
+当前推荐用 Render Docker Web Service 部署整套服务，数据库推荐用 Neon Free Postgres。原因是本项目不是纯静态站点：FastAPI 后端需要 AkShare/pandas，并且策略学习库必须长期持久化。Vercel/Void 更适合前端或对应平台运行时；这版用单容器能让前端和 `/api` 同源运行。
+
+详细部署操作见 `DEPLOYMENT.md`。
+
+仓库已包含：
+
+- `Dockerfile`：构建 Vite 前端，并由 FastAPI 同源托管静态产物。
+- `render.yaml`：Render Blueprint，使用 Docker runtime、Free plan、`/api/health` 健康检查。
+- `STOCK_LAB_DATA_DIR`：可把行情缓存和报告目录切到云平台运行目录，默认本地 `data/`。
+- `STOCK_LAB_DATABASE_URL`：策略学习库连接串。不配置时使用 `data/stock_lab.sqlite3`；线上建议填 Neon/Supabase 的 Postgres URL。
+- `STOCK_LAB_AI_COMMAND`：可选外部大模型命令。系统会把受控 JSON payload 写入 stdin，并使用命令 stdout 作为解释文本。
+
+Render 部署流程：
+
+1. 把仓库推到 GitHub/GitLab/Bitbucket。
+2. 在 Render 创建 Blueprint 或 Docker Web Service，选择本仓库。
+3. 确认 `render.yaml` 使用 `runtime: docker` 和 `plan: free`。
+4. 在 Neon 创建免费 Postgres 数据库，复制 pooled connection string。
+5. 在 Render 环境变量里填入 `STOCK_LAB_DATABASE_URL=postgresql://...`。
+6. 部署完成后访问 Render 分配的 `https://*.onrender.com` 地址。
+
+免费实例适合演示和测试。Render Free Web Service 不能保留本地文件系统改动，所以长期学习记忆不要依赖 `/data`；应使用 `STOCK_LAB_DATABASE_URL` 指向外部数据库。
+
+## 数据库
+
+学习库现在由 `backend/app/services/learning_store.py` 管理：
+
+- `learning_records`：每条盘后推荐在次日的验证结果、系统归因和用户复盘。
+- `strategy_experiments`：每次参数建议的稳定实验版本。
+- `strategy_experiment_outcomes`：同一实验版本下 baseline/proposed 的后续胜率、平均收益和回撤对照。
+
+旧的 `data/learning/records.json` 会在首次读取时自动导入数据库；后续新写入以数据库为准。
+
+本地默认无需配置：
+
+```text
+data/stock_lab.sqlite3
+```
+
+线上推荐：
+
+```text
+STOCK_LAB_DATABASE_URL=postgresql://USER:PASSWORD@HOST/DB?sslmode=require
+```
+
+## 大模型能力
+
+当前系统默认没有直接绑定某个大模型供应商。`backend/app/services/ai.py` 提供两层能力：
+
+- 默认：`deterministic_explanation()` 生成规则化解释，优点是稳定、可测、不会编造未提供的信息。
+- 可选：设置 `STOCK_LAB_AI_COMMAND` 后，系统把包含候选、回测、学习摘要的 JSON payload 传给外部命令，由你接入任意 LLM CLI 或网关。
+
+技术上建议大模型只做“解释、归因假设、复盘摘要、人工反馈结构化”，不要让模型直接改策略参数或宣称 80% 胜率。策略是否进化必须由数据库里的跨行情样本、A/B 实验表现和回撤指标验证。
+
+## 公众号消息知识
+
+“消息异动”页新增了公众号知识入口：
+
+- 保存订阅源：公众号名、样例文章 URL、可选 Feed URL。
+- 导入文章：填写微信公众号文章 URL；如果当前网络无法直接访问微信文章，也可以粘贴文章 HTML。
+- 知识提取：系统会保存标题、正文、摘要、主题标签、机会点、风险点和市场相关度。
+
+微信没有稳定公开接口可订阅任意公众号的全部历史和后续消息。官方发布接口主要面向公众号自身或授权后的公众号；RSSHub 文档也明确提示公众号直接抓取困难。因此当前实现采用“手动 URL 导入 + 合规 feed 预留”的简洁形态，不把系统建立在不稳定的反爬链路上。
 
 ## 注意
 

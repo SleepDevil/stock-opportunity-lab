@@ -12,6 +12,7 @@ import pandas as pd
 
 from app.config import AppConfig
 from app.services.data_provider import MarketDataProvider
+from app.services.learning import annotate_candidates_with_learning
 from app.services.strategy import attach_buy_plan
 from app.utils import json_records, normalize_trade_date
 
@@ -54,6 +55,11 @@ OUTPUT_COLUMNS = [
     "流通市值",
     "60日涨跌幅",
     "score",
+    "学习样本数",
+    "学习胜率%",
+    "学习平均收益%",
+    "学习动作",
+    "学习提示",
     "机会标签",
     "计划低吸价",
     "计划买入上限",
@@ -111,6 +117,7 @@ def run_screen(
     candidates = ranked.head(size).copy()
     candidates.insert(0, "排名", range(1, len(candidates) + 1))
     candidates = attach_buy_plan(candidates, config.strategy)
+    candidates = annotate_candidates_with_learning(config, candidates)
     candidates = enrich_candidates(candidates, provider) if enrich and not candidates.empty else candidates
     candidates = attach_trend_points(candidates, provider, normalized_date, refresh=refresh)
     if "行业" not in candidates.columns:
@@ -309,6 +316,7 @@ def prepare_monitor_pool(ranked: pd.DataFrame, config: AppConfig) -> pd.DataFram
     targets = ranked.copy()
     targets.insert(0, "排名", range(1, len(targets) + 1))
     targets = attach_buy_plan(targets, config.strategy)
+    targets = annotate_candidates_with_learning(config, targets)
     if "行业" not in targets.columns:
         targets["行业"] = ""
     if "上市时间" not in targets.columns:

@@ -1,11 +1,21 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+import os
 from pathlib import Path
 from typing import Any
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+def default_data_dir() -> Path:
+    override = os.getenv("STOCK_LAB_DATA_DIR")
+    return Path(override).expanduser() if override else PROJECT_ROOT / "data"
+
+
+def default_database_url() -> str | None:
+    return os.getenv("STOCK_LAB_DATABASE_URL")
 
 
 @dataclass
@@ -51,7 +61,8 @@ class StrategyConfig:
 @dataclass
 class AppConfig:
     project_root: Path = PROJECT_ROOT
-    data_dir: Path = PROJECT_ROOT / "data"
+    data_dir: Path = field(default_factory=default_data_dir)
+    database_url: str | None = field(default_factory=default_database_url)
     screen: ScreenConfig = field(default_factory=ScreenConfig)
     strategy: StrategyConfig = field(default_factory=StrategyConfig)
 
@@ -76,8 +87,19 @@ class AppConfig:
         data = asdict(self)
         data["project_root"] = str(self.project_root)
         data["data_dir"] = str(self.data_dir)
+        data["database_url"] = mask_database_url(self.database_url) if self.database_url else str(self.default_sqlite_database_path)
         return data
+
+    @property
+    def default_sqlite_database_path(self) -> Path:
+        return self.data_dir / "stock_lab.sqlite3"
+
+
+def mask_database_url(url: str) -> str:
+    if "@" not in url or "://" not in url:
+        return url
+    scheme, rest = url.split("://", 1)
+    return f"{scheme}://***@{rest.split('@', 1)[1]}"
 
 
 CONFIG = AppConfig()
-

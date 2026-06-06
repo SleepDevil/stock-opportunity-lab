@@ -386,6 +386,33 @@ button {
   word-break: break-word;
 }
 
+.wechat-knowledge-list {
+  display: grid;
+  gap: 10px;
+}
+
+.wechat-knowledge-card,
+.wechat-knowledge-bullets {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.wechat-knowledge-card p,
+.wechat-knowledge-bullets p {
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+
+.wechat-knowledge-bullets.good {
+  border-color: rgba(12, 166, 120, 0.22);
+}
+
+.wechat-knowledge-bullets.risk {
+  border-color: rgba(250, 82, 82, 0.22);
+}
+
 .sector-controls {
   gap: 16px;
 }
@@ -1117,6 +1144,112 @@ button {
   color: var(--muted);
   font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   white-space: nowrap;
+}
+
+.learning-panel {
+  padding: 16px;
+  border-color: var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.learning-reasons {
+  min-height: 118px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.learning-reason {
+  min-height: 34px;
+  margin-top: 8px;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.learning-reason.success {
+  border-color: rgba(38, 166, 134, 0.25);
+}
+
+.learning-reason.failure {
+  border-color: rgba(242, 153, 74, 0.28);
+}
+
+.learning-reason p {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.learning-target {
+  margin-top: 12px;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.learning-suggestions {
+  display: grid;
+  gap: 8px;
+}
+
+.learning-suggestion {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.strategy-change,
+.strategy-experiment {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.strategy-experiment.active {
+  border-color: rgba(45, 107, 255, 0.32);
+  background: rgba(45, 107, 255, 0.08);
+}
+
+.strategy-change p,
+.strategy-experiment p {
+  overflow-wrap: anywhere;
+}
+
+.strategy-outcome {
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.74);
+}
+
+.learning-record-list {
+  display: grid;
+  gap: 10px;
+}
+
+.learning-record {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.learning-record span {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.learning-record p {
+  overflow-wrap: anywhere;
 }
 
 .evidence-card {

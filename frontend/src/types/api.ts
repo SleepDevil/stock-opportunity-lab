@@ -59,6 +59,57 @@ export type IntradayAlertsResponse = {
   alerts: IntradayAlert[];
 };
 
+export type WechatSubscription = {
+  id: string;
+  source_name: string;
+  sample_url?: string | null;
+  feed_url?: string | null;
+  capability: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type WechatKnowledge = {
+  summary: string;
+  tags: string[];
+  opportunities: string[];
+  risks: string[];
+  market_relevance: 'low' | 'medium' | 'high' | string;
+  source_name: string;
+};
+
+export type WechatArticle = {
+  id: string;
+  subscription_id: string;
+  source_name: string;
+  title: string;
+  url: string;
+  publish_time?: string | null;
+  content_text: string;
+  knowledge: WechatKnowledge;
+  created_at: string;
+  updated_at: string;
+};
+
+export type WechatKnowledgeResponse = {
+  subscriptions: WechatSubscription[];
+  articles: WechatArticle[];
+  capability_note: string;
+};
+
+export type WechatSubscriptionRequest = {
+  source_name: string;
+  sample_url?: string | null;
+  feed_url?: string | null;
+};
+
+export type WechatArticleIngestRequest = {
+  source_name: string;
+  article_url: string;
+  html?: string | null;
+};
+
 export type ScreenReportsResponse = {
   dates: string[];
   latest?: string | null;
@@ -123,6 +174,11 @@ export type Candidate = {
   流通市值: number;
   '60日涨跌幅': number;
   score: number;
+  学习样本数?: number | null;
+  '学习胜率%'?: number | null;
+  '学习平均收益%'?: number | null;
+  学习动作?: string | null;
+  学习提示?: string | null;
   机会标签: string;
   计划低吸价: number;
   计划买入上限: number;
@@ -156,6 +212,137 @@ export type BacktestRow = Candidate & {
   盘中触及止损?: boolean | null;
   盘中触及止盈?: boolean | null;
   收盘站上计划上限?: boolean | null;
+};
+
+export type LearningReasonCount = {
+  reason: string;
+  count: number;
+};
+
+export type LearningUserNote = {
+  author: string;
+  note: string;
+  created_at: string;
+};
+
+export type LearningRecord = {
+  id: string;
+  screen_date: string;
+  actual_date: string;
+  code: string;
+  name: string;
+  rank?: number | null;
+  entry_triggered: boolean;
+  entry_mode: string;
+  outcome: 'win' | 'loss' | 'missed' | 'flat' | 'unknown' | string;
+  close_return_pct?: number | null;
+  max_drawdown_pct?: number | null;
+  max_profit_pct?: number | null;
+  touched_stop_loss?: boolean | null;
+  touched_take_profit?: boolean | null;
+  closed_above_plan_high?: boolean | null;
+  system_reasons: string[];
+  system_attribution: string;
+  features: Record<string, unknown>;
+  user_notes: LearningUserNote[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type LearningStrategyInsights = {
+  target_win_rate: number;
+  win_rate_gap: number;
+  sample_status: string;
+  recommendations: string[];
+};
+
+export type LearningSummary = {
+  total_cases: number;
+  buy_cases: number;
+  winning_buys: number;
+  losing_buys: number;
+  missed_cases: number;
+  buy_win_rate: number;
+  avg_buy_return: number;
+  avg_max_drawdown: number;
+  user_feedback_count: number;
+  top_failure_reasons: LearningReasonCount[];
+  top_success_reasons: LearningReasonCount[];
+  strategy_insights: LearningStrategyInsights;
+  recent_records: LearningRecord[];
+  updated_at?: string | null;
+};
+
+export type LearningFeedbackRequest = {
+  screen_date: string;
+  actual_date: string;
+  code: string;
+  note: string;
+  author?: string | null;
+};
+
+export type LearningFeedbackResponse = {
+  record: LearningRecord;
+  summary: LearningSummary;
+};
+
+export type StrategyParameterChange = {
+  parameter: string;
+  current: number;
+  proposed: number;
+  direction: 'up' | 'down' | string;
+  reason: string;
+  confidence: 'low' | 'medium' | 'high' | string;
+};
+
+export type StrategyExperimentPlan = {
+  name: string;
+  status: string;
+  metric: string;
+  notes: string;
+};
+
+export type StrategyExperimentOutcome = {
+  id: string;
+  experiment_id: string;
+  variant: 'baseline' | 'proposed' | string;
+  screen_date: string;
+  actual_date: string;
+  candidate_count: number;
+  bought_count: number;
+  buy_win_rate: number;
+  avg_close_return: number;
+  avg_max_drawdown: number;
+  summary: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+};
+
+export type StrategyExperiment = {
+  id: string;
+  status: string;
+  target_win_rate: number;
+  current_metrics: Record<string, unknown>;
+  current_strategy: Record<string, number>;
+  proposed_strategy: Record<string, number>;
+  parameter_changes: StrategyParameterChange[];
+  experiment_plan: StrategyExperimentPlan[];
+  disclaimer: string;
+  created_at: string;
+  updated_at: string;
+  outcomes: StrategyExperimentOutcome[];
+};
+
+export type StrategyOptimizationResponse = {
+  target_win_rate: number;
+  current_metrics: Record<string, unknown>;
+  current_strategy: Record<string, number>;
+  proposed_strategy: Record<string, number>;
+  parameter_changes: StrategyParameterChange[];
+  experiment_plan: StrategyExperimentPlan[];
+  experiment: StrategyExperiment;
+  experiment_history: StrategyExperiment[];
+  disclaimer: string;
 };
 
 export type ScreenResponse = {
@@ -206,9 +393,27 @@ export type BacktestResponse = {
     best?: { code: string; name: string; return: number; entry_mode: string } | null;
     worst?: { code: string; name: string; return: number; entry_mode: string } | null;
   };
+  learning_summary: LearningSummary;
   report_paths: Record<string, string>;
   ai_payload: unknown;
   analysis: string;
+};
+
+export type EvolutionCycleRequest = {
+  actual_date?: string | null;
+  screen_date?: string | null;
+  refresh?: boolean;
+  exclude_boards?: string[];
+};
+
+export type EvolutionCycleResponse = {
+  status: 'completed';
+  screen_date: string;
+  actual_date: string;
+  backtest: BacktestResponse;
+  learning_summary: LearningSummary;
+  strategy_optimization: StrategyOptimizationResponse;
+  message: string;
 };
 
 export type StockAnalysisResponse = {

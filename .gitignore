@@ -23,4 +23,7 @@ data/history/intraday/*.csv
 data/reports/*.csv
 data/reports/*.json
 data/reports/*.md
+data/learning/*.json
+data/*.sqlite3
+data/*.sqlite3-*
 data/settings.json
