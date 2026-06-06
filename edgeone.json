@@ -1,8 +1,8 @@
 {
-  "installCommand": "npm --prefix frontend ci",
+  "installCommand": "npm --prefix frontend ci --include=optional",
   "buildCommand": "node scripts/build-edgeone.mjs",
   "outputDirectory": "frontend/dist",
-  "nodeVersion": "22.11.0",
+  "nodeVersion": "22.17.1",
   "cloudFunctions": {
     "python": {
       "maxDuration": 120

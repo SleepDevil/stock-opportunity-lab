@@ -74,10 +74,10 @@ postgresql://USER:PASSWORD@HOST.neon.tech/DB?sslmode=require
 3. 如果页面让你填写构建配置，保持仓库内 `edgeone.json` 为准：
 
 ```text
-Install Command: npm --prefix frontend ci
+Install Command: npm --prefix frontend ci --include=optional
 Build Command: node scripts/build-edgeone.mjs
 Output Directory: frontend/dist
-Node Version: 22.11.0
+Node Version: 22.17.1
 ```
 
 4. 在环境变量里添加：
