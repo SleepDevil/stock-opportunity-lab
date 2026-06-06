@@ -176,6 +176,33 @@ class SectorStockRow(BaseModel):
     volume_ratio: float
 
 
+class CrisisIndicator(BaseModel):
+    key: str
+    title: str
+    value: float | int | None = None
+    unit: str = ""
+    date: str | None = None
+    status: str
+    tone: str
+    score: float
+    summary: str
+    detail: str
+    source: str
+    precision: str
+    components: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class CrisisMonitorResponse(BaseModel):
+    trade_date: str
+    generated_at: str
+    risk_score: float
+    risk_level: str
+    risk_label: str
+    summary: str
+    indicators: list[CrisisIndicator]
+    notes: list[str] = Field(default_factory=list)
+
+
 class SectorFlowResponse(BaseModel):
     trade_date: str
     scope: Literal["candidates", "targets"]
@@ -190,6 +217,7 @@ class SectorFlowResponse(BaseModel):
     industry_rows: list[SectorAggregateRow]
     tag_rows: list[SectorAggregateRow]
     top_candidates: list[SectorStockRow]
+    crisis_monitor: CrisisMonitorResponse | None = None
 
 
 class BacktestResponse(BaseModel):

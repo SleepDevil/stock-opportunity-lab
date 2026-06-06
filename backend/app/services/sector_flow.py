@@ -5,6 +5,7 @@ from typing import Any, Literal
 import pandas as pd
 
 from app.config import AppConfig
+from app.services.crisis_monitor import CrisisDataProvider, run_crisis_monitor
 from app.services.screener import load_screen_report, load_screen_targets
 from app.utils import normalize_trade_date
 
@@ -21,7 +22,13 @@ NUMERIC_COLUMNS = [
 ]
 
 
-def run_sector_flow(config: AppConfig, trade_date: str, scope: SectorScope = "targets") -> dict[str, Any]:
+def run_sector_flow(
+    config: AppConfig,
+    trade_date: str,
+    scope: SectorScope = "targets",
+    crisis_provider: CrisisDataProvider | None = None,
+    include_crisis: bool = True,
+) -> dict[str, Any]:
     normalized = normalize_trade_date(trade_date)
     if scope not in {"candidates", "targets"}:
         raise ValueError("scope must be candidates or targets")
@@ -35,7 +42,7 @@ def run_sector_flow(config: AppConfig, trade_date: str, scope: SectorScope = "ta
     tag_rows = aggregate_tags(frame, total_amount)
     leader = board_rows[0]["name"] if board_rows else None
 
-    return {
+    result = {
         "trade_date": normalized,
         "scope": scope,
         "source_count": int(len(frame)),
@@ -50,6 +57,9 @@ def run_sector_flow(config: AppConfig, trade_date: str, scope: SectorScope = "ta
         "tag_rows": tag_rows,
         "top_candidates": top_candidates(frame),
     }
+    if include_crisis:
+        result["crisis_monitor"] = run_crisis_monitor(normalized, provider=crisis_provider)
+    return result
 
 
 def normalize_sector_frame(frame: pd.DataFrame) -> pd.DataFrame:

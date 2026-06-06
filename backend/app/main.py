@@ -14,6 +14,7 @@ from app.models import (
     ApiMessage,
     BacktestRequest,
     BacktestResponse,
+    CrisisMonitorResponse,
     EvolutionCycleRequest,
     EvolutionCycleResponse,
     IntradayAlertsRequest,
@@ -52,6 +53,7 @@ from app.services.client_auth import (
     reject_untrusted_origin_if_present,
     require_client_auth,
 )
+from app.services.crisis_monitor import run_crisis_monitor
 from app.services.data_provider import AkShareProvider
 from app.services.evolution import run_evolution_cycle
 from app.services.financials import AkShareFinancialProvider, run_stock_financials
@@ -224,10 +226,18 @@ def screen_report(date: str) -> ScreenResponse:
 
 
 @app.get("/api/sector-flow", response_model=SectorFlowResponse)
-def sector_flow(date: str, scope: str = "targets") -> SectorFlowResponse:
+def sector_flow(date: str, scope: str = "targets", include_crisis: bool = True) -> SectorFlowResponse:
     try:
-        result = run_sector_flow(CONFIG, date, scope=scope)  # type: ignore[arg-type]
+        result = run_sector_flow(CONFIG, date, scope=scope, include_crisis=include_crisis)  # type: ignore[arg-type]
         return SectorFlowResponse(**result)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/crisis-monitor", response_model=CrisisMonitorResponse)
+def crisis_monitor(date: str) -> CrisisMonitorResponse:
+    try:
+        return CrisisMonitorResponse(**run_crisis_monitor(date))
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -657,6 +667,8 @@ def frontend_response_path(full_path: str, dist_dir: Path | None = None) -> Path
         inside_dist = False
     if inside_dist and target.is_file():
         return target
+    if Path(full_path).suffix:
+        return None
     return index if index.exists() else None
 
 

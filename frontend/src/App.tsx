@@ -70,6 +70,7 @@ import { ConfigPanel } from './components/ConfigPanel';
 import { IntradayChart } from './components/IntradayChart';
 import {
   fetchConfig,
+  fetchCrisisMonitor,
   fetchIntraday,
   fetchIntradayAlerts,
   fetchLearningSummary,
@@ -98,6 +99,8 @@ import type {
   AppConfig,
   BacktestResponse,
   Candidate,
+  CrisisIndicator,
+  CrisisMonitorResponse,
   IntradayAlert,
   IntradayPoint,
   LearningSummary,
@@ -2766,12 +2769,20 @@ function SectorsPage() {
   const selectedSectorTradeDate = sectorDate ? toTradeDate(sectorDate) : '';
   const sectorQuery = useQuery({
     queryKey: ['sector-flow', selectedSectorTradeDate, sectorScope],
-    queryFn: () => fetchSectorFlow({ date: selectedSectorTradeDate, scope: sectorScope }),
+    queryFn: () => fetchSectorFlow({ date: selectedSectorTradeDate, scope: sectorScope, include_crisis: false }),
     enabled: Boolean(selectedSectorTradeDate),
     staleTime: 30_000,
     retry: 1
   });
+  const crisisQuery = useQuery({
+    queryKey: ['crisis-monitor', selectedSectorTradeDate],
+    queryFn: () => fetchCrisisMonitor(selectedSectorTradeDate),
+    enabled: Boolean(selectedSectorTradeDate),
+    staleTime: 10 * 60_000,
+    retry: 1
+  });
   const sector = sectorQuery.data;
+  const crisisMonitor = crisisQuery.data ?? sector?.crisis_monitor ?? undefined;
   const sectorDateDisplay = sector ? displayTradeDate(sector.trade_date) : sectorDate || '-';
   const scopeLabel = sectorScope === 'targets' ? '全部目标池' : '推荐观察池';
   const validIndustryRows = sector?.industry_rows.filter((row) => row.name !== '未补行业') ?? [];
@@ -2914,22 +2925,30 @@ function SectorsPage() {
             </SimpleGrid>
           </div>
 
-          <Paper className="decision-stack sector-side" withBorder>
-            <Group justify="space-between" align="center" mb="xs">
-              <div>
-                <Text fw={900}>资金中枢</Text>
-                <Text size="xs" c="dimmed">按成交额排序的样本龙头。</Text>
-              </div>
-              <ThemeIcon color="dark" variant="light"><Gauge size={18} /></ThemeIcon>
-            </Group>
-            <Stack gap="sm">
-              <MetricBar label="板块集中度" value={sector.board_rows[0]?.amount_share ?? 0} suffix={sector.board_rows[0] ? `${sector.board_rows[0].name} ${formatPct(sector.board_rows[0].amount_share)}` : '-'} color="teal" />
-              <MetricBar label="平均涨跌幅" value={Math.max(0, Math.min(100, 50 + sector.avg_pct_change * 5))} suffix={formatPct(sector.avg_pct_change)} color="orange" />
-              <MetricBar label="平均评分" value={sector.avg_score} suffix={`${formatNumber(sector.avg_score, 1)}/100`} color="blue" />
-              <Divider />
-              <SectorStockList rows={sector.top_candidates} tradeDate={sector.trade_date} />
-            </Stack>
-          </Paper>
+          <div className="sector-side">
+            <Paper className="decision-stack" withBorder>
+              <Group justify="space-between" align="center" mb="xs">
+                <div>
+                  <Text fw={900}>资金中枢</Text>
+                  <Text size="xs" c="dimmed">按成交额排序的样本龙头。</Text>
+                </div>
+                <ThemeIcon color="dark" variant="light"><Gauge size={18} /></ThemeIcon>
+              </Group>
+              <Stack gap="sm">
+                <MetricBar label="板块集中度" value={sector.board_rows[0]?.amount_share ?? 0} suffix={sector.board_rows[0] ? `${sector.board_rows[0].name} ${formatPct(sector.board_rows[0].amount_share)}` : '-'} color="teal" />
+                <MetricBar label="平均涨跌幅" value={Math.max(0, Math.min(100, 50 + sector.avg_pct_change * 5))} suffix={formatPct(sector.avg_pct_change)} color="orange" />
+                <MetricBar label="平均评分" value={sector.avg_score} suffix={`${formatNumber(sector.avg_score, 1)}/100`} color="blue" />
+                <Divider />
+                <SectorStockList rows={sector.top_candidates} tradeDate={sector.trade_date} />
+              </Stack>
+            </Paper>
+
+            <CrisisMonitorPanel
+              monitor={crisisMonitor}
+              loading={crisisQuery.isFetching && !crisisMonitor}
+              error={crisisQuery.error instanceof Error ? crisisQuery.error.message : undefined}
+            />
+          </div>
         </section>
       )}
 
@@ -3387,6 +3406,146 @@ function MetricBar({ label, value, suffix, color }: { label: string; value: numb
       <Progress value={percent} color={color} size="sm" radius="xl" />
     </div>
   );
+}
+
+function CrisisMonitorPanel({ monitor, loading = false, error }: { monitor?: CrisisMonitorResponse; loading?: boolean; error?: string }) {
+  if (!monitor) {
+    return (
+      <Paper className="opportunity-board crisis-monitor-panel" withBorder>
+        <Group justify="space-between" align="flex-start" mb="sm">
+          <div>
+            <Text fw={900}>危机监控</Text>
+            <Text size="xs" c="dimmed">巴菲特指标、宽基 ETF、股指期货和两融余额。</Text>
+          </div>
+          <Badge color={error ? 'red' : 'gray'} variant="light">{error ? '缺失' : '读取中'}</Badge>
+        </Group>
+        {error ? (
+          <Text size="sm" c="dimmed" className="crisis-summary">{error}</Text>
+        ) : (
+          <Stack gap="xs">
+            <Skeleton height={8} radius="xl" visible={loading} />
+            <Skeleton height={86} radius="sm" visible={loading} />
+            <Text size="sm" c="dimmed">正在读取危机指标...</Text>
+          </Stack>
+        )}
+      </Paper>
+    );
+  }
+  const color = crisisColor(monitor.risk_level);
+  return (
+    <Paper className="opportunity-board crisis-monitor-panel" withBorder>
+      <Group justify="space-between" align="flex-start" mb="sm">
+        <div>
+          <Text fw={900}>危机监控</Text>
+          <Text size="xs" c="dimmed">
+            {displayTradeDate(monitor.trade_date)} · {displayUpdateTime(monitor.generated_at)}
+          </Text>
+        </div>
+        <Badge color={color} variant="light">{monitor.risk_label}</Badge>
+      </Group>
+
+      <Stack gap="sm">
+        <MetricBar label="系统性压力" value={monitor.risk_score} suffix={`${formatNumber(monitor.risk_score, 1)}/100`} color={color} />
+        <Text size="sm" className="crisis-summary">{monitor.summary}</Text>
+        <div className="crisis-indicator-list">
+          {monitor.indicators.map((indicator) => (
+            <CrisisIndicatorCard indicator={indicator} key={indicator.key} />
+          ))}
+        </div>
+        {monitor.notes.length ? (
+          <Text size="xs" c="dimmed" className="crisis-note">{monitor.notes[0]}</Text>
+        ) : null}
+      </Stack>
+    </Paper>
+  );
+}
+
+function CrisisIndicatorCard({ indicator }: { indicator: CrisisIndicator }) {
+  const color = crisisColor(indicator.status);
+  return (
+    <div className="crisis-indicator-card">
+      <Group justify="space-between" gap="xs" align="flex-start">
+        <div>
+          <Text fw={900} size="sm">{indicator.title}</Text>
+          <Text size="xs" c="dimmed">{indicator.date ? displayTradeDate(indicator.date) : indicator.source}</Text>
+        </div>
+        <Badge color={color} variant="light">{crisisStatusLabel(indicator.status)}</Badge>
+      </Group>
+      <Group justify="space-between" align="flex-end" gap="xs" mt={8}>
+        <strong>{formatCrisisValue(indicator)}</strong>
+        <span>{indicator.summary}</span>
+      </Group>
+      <Text size="xs" c="dimmed" mt={6}>{indicator.detail}</Text>
+      {indicator.components.length ? (
+        <div className="crisis-components">
+          {indicator.components.slice(0, 3).map((component) => (
+            <span key={component.label}>
+              {component.label} {formatComponentValue(component.value, component.unit)}
+            </span>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function formatCrisisValue(indicator: CrisisIndicator): string {
+  const value = indicator.value;
+  if (value == null || Number.isNaN(value)) {
+    return '-';
+  }
+  if (indicator.unit === '元') {
+    return formatMoney(value);
+  }
+  if (indicator.unit === '%') {
+    return formatPct(value);
+  }
+  if (indicator.unit === '手') {
+    return `${formatNumber(value, 0)}手`;
+  }
+  if (indicator.unit === '亿元') {
+    return `${formatNumber(value, 2)}亿`;
+  }
+  return `${formatNumber(value, 2)}${indicator.unit}`;
+}
+
+function formatComponentValue(value: number | string | null | undefined, unit?: string): string {
+  if (value == null) {
+    return '-';
+  }
+  if (typeof value === 'string') {
+    return value;
+  }
+  if (unit === '元') {
+    return formatMoney(value);
+  }
+  if (unit === '%') {
+    return formatPct(value);
+  }
+  if (unit === '手') {
+    return `${formatNumber(value, 0)}手`;
+  }
+  if (unit === '亿元') {
+    return `${formatNumber(value, 2)}亿`;
+  }
+  return `${formatNumber(value, 2)}${unit ?? ''}`;
+}
+
+function crisisColor(status: string): 'red' | 'orange' | 'blue' | 'teal' | 'gray' {
+  if (status === 'risk' || status === 'red') return 'red';
+  if (status === 'watch' || status === 'orange') return 'orange';
+  if (status === 'support' || status === 'green') return 'teal';
+  if (status === 'neutral' || status === 'blue') return 'blue';
+  return 'gray';
+}
+
+function crisisStatusLabel(status: string): string {
+  if (status === 'risk') return '风险';
+  if (status === 'watch') return '观察';
+  if (status === 'support') return '承接';
+  if (status === 'neutral') return '中性';
+  if (status === 'unavailable') return '缺失';
+  return status;
 }
 
 function SectorAggregateChart({

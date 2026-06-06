@@ -143,6 +143,37 @@ export type SectorStockRow = {
   volume_ratio: number;
 };
 
+export type CrisisIndicator = {
+  key: string;
+  title: string;
+  value?: number | null;
+  unit: string;
+  date?: string | null;
+  status: string;
+  tone: string;
+  score: number;
+  summary: string;
+  detail: string;
+  source: string;
+  precision: string;
+  components: Array<{
+    label: string;
+    value?: number | string | null;
+    unit?: string;
+  }>;
+};
+
+export type CrisisMonitorResponse = {
+  trade_date: string;
+  generated_at: string;
+  risk_score: number;
+  risk_level: string;
+  risk_label: string;
+  summary: string;
+  indicators: CrisisIndicator[];
+  notes: string[];
+};
+
 export type SectorFlowResponse = {
   trade_date: string;
   scope: SectorScope;
@@ -157,6 +188,7 @@ export type SectorFlowResponse = {
   industry_rows: SectorAggregateRow[];
   tag_rows: SectorAggregateRow[];
   top_candidates: SectorStockRow[];
+  crisis_monitor?: CrisisMonitorResponse | null;
 };
 
 export type Candidate = {

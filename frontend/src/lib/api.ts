@@ -1,6 +1,7 @@
 import type {
   AppConfig,
   BacktestResponse,
+  CrisisMonitorResponse,
   EvolutionCycleRequest,
   EvolutionCycleResponse,
   IntradayAlertsResponse,
@@ -108,9 +109,17 @@ export function fetchScreenReport(date: string): Promise<ScreenResponse> {
   return request<ScreenResponse>(`/api/screen-report?${params.toString()}`);
 }
 
-export function fetchSectorFlow(input: { date: string; scope: SectorScope }): Promise<SectorFlowResponse> {
+export function fetchSectorFlow(input: { date: string; scope: SectorScope; include_crisis?: boolean }): Promise<SectorFlowResponse> {
   const params = new URLSearchParams({ date: input.date, scope: input.scope });
+  if (input.include_crisis === false) {
+    params.set('include_crisis', 'false');
+  }
   return request<SectorFlowResponse>(`/api/sector-flow?${params.toString()}`);
+}
+
+export function fetchCrisisMonitor(date: string): Promise<CrisisMonitorResponse> {
+  const params = new URLSearchParams({ date });
+  return request<CrisisMonitorResponse>(`/api/crisis-monitor?${params.toString()}`);
 }
 
 export function runBacktest(input: {

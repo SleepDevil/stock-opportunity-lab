@@ -429,7 +429,14 @@ button {
 }
 
 .sector-side {
+  position: sticky;
   top: 18px;
+  display: grid;
+  gap: 14px;
+}
+
+.sector-side .decision-stack {
+  position: static;
 }
 
 .sector-flow-chart {
@@ -534,6 +541,64 @@ button {
   font: inherit;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.crisis-monitor-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.crisis-summary,
+.crisis-note {
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.crisis-indicator-list {
+  display: grid;
+  gap: 8px;
+}
+
+.crisis-indicator-card {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.crisis-indicator-card strong {
+  color: var(--ink);
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+.crisis-indicator-card span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.crisis-components {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-width: 0;
+  padding-top: 4px;
+}
+
+.crisis-components span {
+  padding: 3px 6px;
+  border-radius: 6px;
+  background: var(--blue-soft);
+  color: var(--ink-2);
+  text-align: left;
 }
 
 .kline-hover-target {
@@ -1556,6 +1621,10 @@ button {
   }
 
   .decision-stack {
+    position: static;
+  }
+
+  .sector-side {
     position: static;
   }
 }

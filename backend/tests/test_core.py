@@ -13,6 +13,7 @@ from app.models import ScreenRequest
 from app.services.notification_settings import load_notification_settings, save_notification_settings
 from app.services.notifications import send_feishu_tip
 from app.services.backtest import run_backtest
+from app.services.crisis_monitor import run_crisis_monitor
 from app.services.intraday_alerts import build_candidate_alerts, build_candidate_alerts_from_spot, run_intraday_alerts
 from app.services.sector_flow import run_sector_flow
 from app.services.stock_analysis import run_stock_analysis, run_stock_search, stock_name_initials
@@ -30,6 +31,76 @@ from app.services.screener import classify_board, load_screen_targets, run_scree
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
+
+
+class FakeCrisisProvider:
+    def buffett_index(self) -> pd.DataFrame:
+        return pd.DataFrame(
+            [
+                {"日期": date(2026, 6, 1), "总市值": 86.0, "GDP": 100.0, "近十年分位数": 0.72},
+                {"日期": date(2026, 6, 2), "总市值": 94.0, "GDP": 100.0, "近十年分位数": 0.84},
+            ]
+        )
+
+    def cffex_rank(self, trade_date: str, vars_list: list[str]) -> dict[str, pd.DataFrame]:
+        assert trade_date == "20260602"
+        assert set(vars_list) == {"IF", "IC", "IM", "IH"}
+        return {
+            "IF2606": pd.DataFrame(
+                [
+                    {
+                        "rank": 1,
+                        "long_party_name": "中信期货",
+                        "long_open_interest": 10_000,
+                        "long_open_interest_chg": -100,
+                        "short_party_name": "中信期货",
+                        "short_open_interest": 12_000,
+                        "short_open_interest_chg": 1_500,
+                        "symbol": "IF2606",
+                        "var": "IF",
+                        "date": "20260602",
+                    }
+                ]
+            )
+        }
+
+    def broad_etf_spot(self) -> pd.DataFrame:
+        return pd.DataFrame(
+            [
+                {
+                    "代码": "510300",
+                    "名称": "沪深300ETF",
+                    "最新份额": 20_000_000_000,
+                    "总市值": 80_000_000_000,
+                    "主力净流入-净额": 1_200_000_000,
+                    "数据日期": "2026-06-02",
+                },
+                {
+                    "代码": "510050",
+                    "名称": "上证50ETF",
+                    "最新份额": 10_000_000_000,
+                    "总市值": 30_000_000_000,
+                    "主力净流入-净额": -300_000_000,
+                    "数据日期": "2026-06-02",
+                },
+            ]
+        )
+
+    def margin_sh(self) -> pd.DataFrame:
+        return pd.DataFrame(
+            [
+                {"日期": date(2026, 5, 29), "融资融券余额": 8_200.0},
+                {"日期": date(2026, 6, 2), "融资融券余额": 8_000.0},
+            ]
+        )
+
+    def margin_sz(self) -> pd.DataFrame:
+        return pd.DataFrame(
+            [
+                {"日期": date(2026, 5, 29), "融资融券余额": 7_800.0},
+                {"日期": date(2026, 6, 2), "融资融券余额": 7_700.0},
+            ]
+        )
 
 
 def test_app_config_allows_data_dir_override(tmp_path: Path, monkeypatch) -> None:
@@ -70,8 +141,11 @@ def test_frontend_static_path_resolves_spa_and_assets(tmp_path: Path) -> None:
     assert frontend_response_path("", dist) == index
     assert frontend_response_path("backtest", dist) == index
     assert frontend_response_path("assets/app.js", dist) == asset
+    assert frontend_response_path("assets/missing.js", dist) is None
+    assert frontend_response_path("assets/missing.css", dist) is None
+    assert frontend_response_path("favicon.ico", dist) is None
     assert frontend_response_path("api/health", dist) is None
-    assert frontend_response_path("../backend/app/main.py", dist) == index
+    assert frontend_response_path("../backend/app/main.py", dist) is None
 
 
 def test_screen_and_backtest_csv_flow(tmp_path: Path) -> None:
@@ -1356,8 +1430,8 @@ def test_sector_flow_aggregates_persisted_screen_targets(tmp_path: Path) -> None
     )
     screen = run_screen(provider, config, "20260602", refresh=False, limit=None, enrich=False)
 
-    targets = run_sector_flow(config, "20260602", scope="targets")
-    candidates = run_sector_flow(config, "20260602", scope="candidates")
+    targets = run_sector_flow(config, "20260602", scope="targets", crisis_provider=FakeCrisisProvider())
+    candidates = run_sector_flow(config, "20260602", scope="candidates", crisis_provider=FakeCrisisProvider())
 
     assert targets["trade_date"] == "20260602"
     assert targets["scope"] == "targets"
@@ -1365,8 +1439,33 @@ def test_sector_flow_aggregates_persisted_screen_targets(tmp_path: Path) -> None
     assert targets["board_rows"][0]["name"] in {"主板", "创业板"}
     assert targets["tag_rows"]
     assert targets["top_candidates"]
+    assert targets["crisis_monitor"]["risk_level"] == "watch"
+    assert {item["key"] for item in targets["crisis_monitor"]["indicators"]} >= {
+        "buffett_indicator",
+        "citic_index_futures",
+        "state_etf_proxy",
+        "margin_balance",
+    }
     assert candidates["source_count"] == len(screen.candidates)
     assert candidates["source_count"] == 1
+
+
+def test_crisis_monitor_builds_risk_indicators_from_public_market_data() -> None:
+    monitor = run_crisis_monitor("20260602", provider=FakeCrisisProvider())
+
+    by_key = {item["key"]: item for item in monitor["indicators"]}
+    assert monitor["risk_level"] == "watch"
+    assert by_key["buffett_indicator"]["value"] == 94.0
+    assert by_key["buffett_indicator"]["status"] == "risk"
+    assert "越高" in by_key["buffett_indicator"]["detail"]
+    assert by_key["citic_index_futures"]["value"] == 1600
+    assert by_key["citic_index_futures"]["status"] == "watch"
+    assert by_key["state_etf_proxy"]["value"] == 110_000_000_000
+    assert by_key["state_etf_proxy"]["status"] == "support"
+    assert by_key["state_etf_proxy"]["precision"] == "proxy"
+    assert by_key["margin_balance"]["value"] == 15_700.0
+    assert by_key["margin_balance"]["status"] == "watch"
+    assert any("中央汇金" in note for note in monitor["notes"])
 
 
 def test_parse_eastmoney_kline_shape() -> None:
