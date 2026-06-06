@@ -30,7 +30,7 @@
 - `edgeone.json`：EdgeOne Pages 构建配置，安装前端依赖、执行 `node scripts/build-edgeone.mjs`、输出 `frontend/dist`，并把 Python Cloud Functions 部署到上海/香港。
 - `cloud-functions/api/[[default]].py`：EdgeOne FastAPI 入口。EdgeOne 会把 `/api/*` 映射到函数内部路径；这个适配层会把路径还原成现有后端需要的 `/api/*`。
 - `cloud-functions/[[default]].py`：EdgeOne 前端深链接兜底入口。EdgeOne 的 `edgeone.json` rewrite 不支持 SPA 路由重写，所以 `/backtest`、`/settings` 这类无后缀路径由该函数返回 `index.html`。
-- `cloud-functions/requirements.txt`：EdgeOne Python Runtime 安装 FastAPI、pandas、AkShare、psycopg 等后端依赖。
+- `cloud-functions/requirements.txt`：EdgeOne Python Runtime 安装 FastAPI、pandas、psycopg 等轻后端依赖。为满足 EdgeOne 单函数包 128 MiB 限制，这里不安装 AkShare/curl-cffi；实时行情采集继续使用 Vercel/Docker 路线或后续独立 worker。
 - `scripts/build-edgeone.mjs`：把 `backend/app` 复制到 `cloud-functions/backend/app`，构建 Vite 前端，并复制 `index.html` 给 EdgeOne 的 SPA fallback。生成目录已被 `.gitignore` 排除。
 - `STOCK_LAB_DATABASE_URL`：线上策略学习库连接串，建议指向 Neon Postgres。
 - `STOCK_LAB_DATA_DIR`：行情缓存和报告目录。Vercel 默认使用 `/tmp/stock-opportunity-lab`；EdgeOne 适配入口也会默认设置为 `/tmp/stock-opportunity-lab`。
@@ -98,7 +98,7 @@ https://<EdgeOne 默认域名>/backtest
 https://<EdgeOne 默认域名>/settings
 ```
 
-EdgeOne Cloud Functions 当前 Python 运行时是 3.10，单函数包大小限制为 128 MB，单次请求最长 120 秒。AkShare、pandas、psycopg 依赖较重，如果构建提示函数包超过限制，需要把 AkShare 采集层拆到独立 worker，EdgeOne 只保留报告查询、设置写入和学习库能力。
+EdgeOne Cloud Functions 当前 Python 运行时是 3.10，单函数包大小限制为 128 MB，单次请求最长 120 秒。EdgeOne 版本不打包 AkShare/curl-cffi，适合承载前端、健康检查、配置、用户设置、学习库和公众号知识等数据库能力；盘后全市场扫描、实时行情采集、财务报表抓取等 AkShare 重采集能力继续使用 Vercel/Docker 路线，后续应拆到独立 worker。
 
 ### 3. 准备 Vercel 登录
 
