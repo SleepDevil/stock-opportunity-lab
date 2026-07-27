@@ -1,0 +1,39 @@
+{
+  "name": "stock-opportunity-lab",
+  "private": true,
+  "version": "0.1.0",
+  "description": "A-share opportunity screening, buy planning, and backtesting for web and Tauri desktop.",
+  "scripts": {
+    "dev": "concurrently -n api,web,wechat -c cyan,green,magenta \"npm run dev:api\" \"npm run dev:web\" \"npm run dev:wechat\"",
+    "dev:core": "concurrently -n api,web -c cyan,green \"npm run dev:api\" \"npm run dev:web\"",
+    "dev:api": "STOCK_LAB_DATABASE_URL= ./.venv/bin/python -m uvicorn app.main:app --app-dir backend --loop asyncio --host 0.0.0.0 --port 8000",
+    "dev:api:reload": "STOCK_LAB_DATABASE_URL= ./.venv/bin/python -m uvicorn app.main:app --app-dir backend --reload --loop asyncio --host 0.0.0.0 --port 8000",
+    "dev:api:remote": "./.venv/bin/python -m uvicorn app.main:app --app-dir backend --loop asyncio --host 0.0.0.0 --port 8000",
+    "dev:web": "cd frontend && npm run dev -- --host 0.0.0.0",
+    "dev:wechat": "bash scripts/dev-wechat-gateway.sh",
+    "desktop:dev": "tauri dev",
+    "tauri": "tauri",
+    "desktop:dev:services": "VITE_API_PROXY_TARGET=http://127.0.0.1:8000 VITE_STOCK_LAB_API_BASE_URL=http://127.0.0.1:5173 npm run dev:core",
+    "desktop:build": "npm run desktop:sidecar && tauri build --config src-tauri/tauri.prod.conf.json",
+    "desktop:build:debug": "npm run desktop:sidecar && tauri build --debug --config src-tauri/tauri.prod.conf.json",
+    "desktop:release": "npm run desktop:sidecar && tauri build --config src-tauri/tauri.release.conf.json",
+    "desktop:release:debug": "npm run desktop:sidecar && tauri build --debug --config src-tauri/tauri.release.conf.json",
+    "desktop:sidecar": "bash scripts/build-desktop-sidecar.sh",
+    "desktop:info": "tauri info",
+    "setup": "bash scripts/setup.sh",
+    "setup:quant": "npm run setup",
+    "test": "npm run test:api && npm run test:web && npm run test:desktop",
+    "test:api": "./.venv/bin/python -m pytest backend/tests",
+    "test:web": "npm --prefix frontend test && npm --prefix frontend run build",
+    "test:desktop": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "build": "npm --prefix frontend run build",
+    "build:desktop:web": "cross-env VITE_STOCK_LAB_DESKTOP=true npm --prefix frontend run build",
+    "build:edgeone": "node scripts/build-edgeone.mjs",
+    "build:github-pages": "VITE_STOCK_LAB_STATIC_MODE=true npm --prefix frontend run build -- --base=/stock-opportunity-lab/"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.4",
+    "concurrently": "^10.0.3",
+    "cross-env": "^10.1.0"
+  }
+}

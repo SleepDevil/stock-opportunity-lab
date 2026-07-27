@@ -1,0 +1,141 @@
+name: Publish desktop release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "desktop-v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-metadata:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Validate release version
+        id: version
+        shell: bash
+        run: |
+          version="$(jq -r '.version' src-tauri/tauri.conf.json)"
+          if [ -z "$version" ] || [ "$version" = "null" ]; then
+            echo "Unable to read the desktop version from src-tauri/tauri.conf.json" >&2
+            exit 1
+          fi
+
+          expected_tag="desktop-v${version}"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "${GITHUB_REF_NAME}" != "$expected_tag" ]; then
+            echo "Release tag ${GITHUB_REF_NAME} does not match desktop version $version (expected $expected_tag)" >&2
+            exit 1
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  publish-tauri:
+    needs: release-metadata
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+          - platform: macos-15-intel
+          - platform: ubuntu-22.04
+          - platform: windows-latest
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install Linux desktop dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22.17.1
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+
+      - name: Cache Rust build artifacts
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ./src-tauri -> target
+
+      - name: Install JavaScript dependencies
+        run: |
+          npm ci
+          npm --prefix frontend ci
+
+      - name: Install desktop backend dependencies
+        run: python -m pip install -e "backend[desktop]"
+
+      - name: Build local API sidecar
+        env:
+          STOCK_LAB_DESKTOP_PYTHON: python
+        run: npm run desktop:sidecar
+
+      - name: Verify updater signing secret
+        shell: bash
+        env:
+          UPDATER_SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -z "$UPDATER_SIGNING_KEY" ]; then
+            echo "TAURI_SIGNING_PRIVATE_KEY is not configured" >&2
+            exit 1
+          fi
+
+      - name: Build signed installers and updater metadata
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: desktop-v__VERSION__
+          releaseName: Stock Opportunity Lab v__VERSION__
+          releaseBody: Download the installer for your platform. Existing updater-enabled clients will discover this release automatically after it is published.
+          releaseDraft: true
+          prerelease: false
+          generateReleaseNotes: true
+          retryAttempts: 2
+          updaterJsonPreferNsis: true
+          args: --config src-tauri/tauri.release.conf.json
+
+  publish-release:
+    if: github.ref_type == 'tag'
+    needs:
+      - release-metadata
+      - publish-tauri
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish verified release as latest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: desktop-v${{ needs.release-metadata.outputs.version }}
+        run: gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest --verify-tag

@@ -1,0 +1,104 @@
+name: Build desktop client
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/desktop-build.yml"
+      - ".github/workflows/desktop-release.yml"
+      - "desktop/**"
+      - "backend/**"
+      - "frontend/**"
+      - "scripts/build-desktop-sidecar.sh"
+      - "src-tauri/**"
+      - "package.json"
+      - "package-lock.json"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/desktop-build.yml"
+      - ".github/workflows/desktop-release.yml"
+      - "desktop/**"
+      - "backend/**"
+      - "frontend/**"
+      - "scripts/build-desktop-sidecar.sh"
+      - "src-tauri/**"
+      - "package.json"
+      - "package-lock.json"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-tauri:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+          - platform: macos-15-intel
+          - platform: ubuntu-22.04
+          - platform: windows-latest
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install Linux desktop dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22.17.1
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+
+      - name: Cache Rust build artifacts
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ./src-tauri -> target
+
+      - name: Install JavaScript dependencies
+        run: |
+          npm ci
+          npm --prefix frontend ci
+
+      - name: Install desktop backend dependencies
+        run: python -m pip install -e "backend[desktop]"
+
+      - name: Build local API sidecar
+        env:
+          STOCK_LAB_DESKTOP_PYTHON: python
+        run: npm run desktop:sidecar
+
+      - name: Build installers
+        uses: tauri-apps/tauri-action@v1
+        with:
+          uploadWorkflowArtifacts: true
+          workflowArtifactNamePattern: stock-opportunity-lab-[version]-[platform]-[arch]-[bundle]
+          args: --config src-tauri/tauri.prod.conf.json

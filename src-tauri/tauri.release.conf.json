@@ -1,0 +1,15 @@
+{
+  "build": {
+    "beforeBuildCommand": "npm run build:desktop:web"
+  },
+  "bundle": {
+    "createUpdaterArtifacts": true,
+    "externalBin": [
+      "binaries/stock-lab-api"
+    ],
+    "macOS": {
+      "entitlements": "Entitlements.plist",
+      "signingIdentity": "-"
+    }
+  }
+}
