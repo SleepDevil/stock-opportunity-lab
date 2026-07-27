@@ -131,11 +131,73 @@ jobs:
           updaterJsonPreferNsis: true
           args: --config src-tauri/tauri.release.conf.json --bundles ${{ matrix.bundles }}
 
+  finalize-updater-metadata:
+    needs:
+      - release-metadata
+      - publish-tauri
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RELEASE_TAG: desktop-v${{ needs.release-metadata.outputs.version }}
+      RELEASE_VERSION: ${{ needs.release-metadata.outputs.version }}
+    steps:
+      - name: Replace API asset URLs with public download URLs
+        shell: bash
+        run: |
+          metadata_dir="${RUNNER_TEMP}/updater-metadata"
+          mkdir -p "$metadata_dir"
+
+          gh release download "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern latest.json \
+            --dir "$metadata_dir" \
+            --clobber
+
+          gh api \
+            "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" \
+            > "$metadata_dir/release.json"
+
+          jq --slurpfile release "$metadata_dir/release.json" '
+            ($release[0].assets
+              | map({key: (.id | tostring), value: .browser_download_url})
+              | from_entries) as $asset_urls
+            | .platforms |= with_entries(
+                if (.value.url | test("/releases/assets/[0-9]+$")) then
+                  (.value.url | capture("/(?<id>[0-9]+)$").id) as $asset_id
+                  | .value.url = (
+                      $asset_urls[$asset_id]
+                      // error("missing release asset for id " + $asset_id)
+                    )
+                else
+                  .
+                end
+              )
+          ' "$metadata_dir/latest.json" > "$metadata_dir/latest.public.json"
+
+          public_prefix="https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/"
+          jq -e \
+            --arg version "$RELEASE_VERSION" \
+            --arg prefix "$public_prefix" \
+            '
+              .version == $version
+              and (.platforms | length > 0)
+              and ([.platforms[].signature | length > 0] | all)
+              and ([.platforms[].url | startswith($prefix)] | all)
+            ' \
+            "$metadata_dir/latest.public.json" \
+            > /dev/null
+
+          cp "$metadata_dir/latest.public.json" "$metadata_dir/latest.json"
+          gh release upload "$RELEASE_TAG" \
+            "$metadata_dir/latest.json" \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
+
   publish-release:
     if: github.ref_type == 'tag'
     needs:
       - release-metadata
-      - publish-tauri
+      - finalize-updater-metadata
     runs-on: ubuntu-latest
     steps:
       - name: Publish verified release as latest
