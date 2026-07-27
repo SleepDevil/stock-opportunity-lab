@@ -43,9 +43,13 @@ jobs:
       matrix:
         include:
           - platform: macos-latest
+            bundles: app,dmg
           - platform: macos-15-intel
+            bundles: app,dmg
           - platform: ubuntu-22.04
+            bundles: appimage,deb
           - platform: windows-latest
+            bundles: nsis,msi
 
     runs-on: ${{ matrix.platform }}
 
@@ -101,4 +105,4 @@ jobs:
         with:
           uploadWorkflowArtifacts: true
           workflowArtifactNamePattern: stock-opportunity-lab-[version]-[platform]-[arch]-[bundle]
-          args: --config src-tauri/tauri.prod.conf.json
+          args: --config src-tauri/tauri.prod.conf.json --bundles ${{ matrix.bundles }}

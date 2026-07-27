@@ -47,9 +47,13 @@ jobs:
       matrix:
         include:
           - platform: macos-latest
+            bundles: app,dmg
           - platform: macos-15-intel
+            bundles: app,dmg
           - platform: ubuntu-22.04
+            bundles: appimage,deb
           - platform: windows-latest
+            bundles: nsis,msi
 
     runs-on: ${{ matrix.platform }}
 
@@ -125,7 +129,7 @@ jobs:
           generateReleaseNotes: true
           retryAttempts: 2
           updaterJsonPreferNsis: true
-          args: --config src-tauri/tauri.release.conf.json
+          args: --config src-tauri/tauri.release.conf.json --bundles ${{ matrix.bundles }}
 
   publish-release:
     if: github.ref_type == 'tag'
