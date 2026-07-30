@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import re
+from time import sleep
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
@@ -26,6 +27,8 @@ WATCHLIST_SYSTEM_PROMPT = """
 6. 事实与比喻必须能清楚区分；可以调侃行情，不讽刺或贬损用户和公司。
 7. 不要重复风险声明，产品会在卡片底部统一展示。
 """.strip()
+
+RATE_LIMIT_RETRY_DELAYS = (2.0, 5.0)
 
 
 class ZhipuAIError(RuntimeError):
@@ -127,22 +130,27 @@ def post_zhipu_json(
         },
         method="POST",
     )
-    try:
-        with urlopen(request, timeout=timeout) as response:
-            raw = response.read()
-    except HTTPError as exc:
-        detail = zhipu_error_detail(exc.read(4096))
-        if exc.code == 401:
-            raise ZhipuAIError("智谱 API Key 校验失败") from exc
-        if exc.code == 429:
-            raise ZhipuAIError("智谱 API 当前触发限流") from exc
-        suffix = f"：{detail}" if detail else ""
-        raise ZhipuAIError(f"智谱接口返回 HTTP {exc.code}{suffix}") from exc
-    except (TimeoutError, URLError) as exc:
-        reason = getattr(exc, "reason", exc)
-        if isinstance(reason, TimeoutError):
-            raise ZhipuAIError("智谱接口请求超时") from exc
-        raise ZhipuAIError("无法连接智谱接口") from exc
+    for attempt in range(len(RATE_LIMIT_RETRY_DELAYS) + 1):
+        try:
+            with urlopen(request, timeout=timeout) as response:
+                raw = response.read()
+            break
+        except HTTPError as exc:
+            detail = zhipu_error_detail(exc.read(4096))
+            if exc.code == 401:
+                raise ZhipuAIError("智谱 API Key 校验失败") from exc
+            if exc.code == 429:
+                if attempt < len(RATE_LIMIT_RETRY_DELAYS):
+                    sleep(RATE_LIMIT_RETRY_DELAYS[attempt])
+                    continue
+                raise ZhipuAIError("智谱 API 当前触发限流") from exc
+            suffix = f"：{detail}" if detail else ""
+            raise ZhipuAIError(f"智谱接口返回 HTTP {exc.code}{suffix}") from exc
+        except (TimeoutError, URLError) as exc:
+            reason = getattr(exc, "reason", exc)
+            if isinstance(reason, TimeoutError):
+                raise ZhipuAIError("智谱接口请求超时") from exc
+            raise ZhipuAIError("无法连接智谱接口") from exc
 
     try:
         decoded = json.loads(raw.decode("utf-8"))

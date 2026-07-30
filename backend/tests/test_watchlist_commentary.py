@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from io import BytesIO
 import json
+from urllib.error import HTTPError
 
 from fastapi.testclient import TestClient
 import pytest
@@ -184,6 +186,47 @@ def test_zhipu_ai_generates_structured_watchlist_commentary(monkeypatch) -> None
     assert body["thinking"] == {"type": "disabled"}
     assert body["response_format"] == {"type": "json_object"}
     assert "zhipu-test-secret" not in request.data.decode("utf-8")
+
+
+def test_zhipu_rate_limit_retries_before_succeeding(monkeypatch) -> None:
+    attempts: list[int] = []
+    delays: list[float] = []
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self) -> bytes:
+            return b'{"ok":true}'
+
+    def fake_urlopen(request, *, timeout):
+        attempts.append(timeout)
+        if len(attempts) < 3:
+            raise HTTPError(
+                request.full_url,
+                429,
+                "rate limited",
+                {},
+                BytesIO(b'{"error":{"message":"rate limited"}}'),
+            )
+        return FakeResponse()
+
+    monkeypatch.setattr(zhipu_ai, "urlopen", fake_urlopen)
+    monkeypatch.setattr(zhipu_ai, "sleep", delays.append)
+
+    response = zhipu_ai.post_zhipu_json(
+        "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+        {"model": "glm-4.7-flash"},
+        api_key="zhipu-test-secret",
+        timeout=12,
+    )
+
+    assert response == {"ok": True}
+    assert attempts == [12, 12, 12]
+    assert delays == [2.0, 5.0]
 
 
 def test_zhipu_failure_can_fall_through_to_legacy_command(monkeypatch) -> None:
