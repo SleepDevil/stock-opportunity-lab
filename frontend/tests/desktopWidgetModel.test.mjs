@@ -166,6 +166,73 @@ test('refreshes quotes only during auction and continuous trading sessions', () 
   assert.equal(model.desktopMarketSession(shanghaiDate(12, 10, 0)), 'closed');
 });
 
+test('schedules one commentary per half-hour trading slot and pauses for lunch', () => {
+  const shanghaiDate = (day, hour, minute) => new Date(`2026-07-${String(day).padStart(2, '0')}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00+08:00`);
+  assert.deepEqual(model.desktopCommentarySlot(shanghaiDate(14, 9, 31)), {
+    key: '20260714-0930',
+    label: '09:30',
+    nextLabel: '10:00'
+  });
+  assert.deepEqual(model.desktopCommentarySlot(shanghaiDate(14, 11, 30)), {
+    key: '20260714-1130',
+    label: '11:30',
+    nextLabel: '13:00'
+  });
+  assert.equal(model.desktopCommentarySlot(shanghaiDate(14, 12, 0)), null);
+  assert.deepEqual(model.desktopCommentarySlot(shanghaiDate(14, 15, 0)), {
+    key: '20260714-1500',
+    label: '15:00',
+    nextLabel: null
+  });
+  assert.equal(model.desktopCommentarySlot(shanghaiDate(12, 10, 0)), null);
+});
+
+test('recognizes whether an exchange quote belongs to the current Shanghai trade date', () => {
+  const now = new Date('2026-07-14T10:00:00+08:00');
+  assert.equal(model.desktopTimestampMatchesShanghaiDate('2026-07-14T09:59:58+08:00', now), true);
+  assert.equal(model.desktopTimestampMatchesShanghaiDate('2026-07-13T15:00:00+08:00', now), false);
+  assert.equal(model.desktopTimestampMatchesShanghaiDate('invalid', now), false);
+  assert.equal(model.desktopTimestampMatchesShanghaiDate(null, now), false);
+});
+
+test('keys commentary by slot and stock membership, not manual order', () => {
+  const first = [
+    { code: '600519', name: '贵州茅台' },
+    { code: '000001', name: '平安银行' }
+  ];
+  const reordered = [...first].reverse();
+  assert.equal(
+    model.desktopCommentaryRequestKey('20260714-1000', first),
+    '20260714-1000|000001,600519'
+  );
+  assert.equal(
+    model.desktopCommentaryRequestKey('20260714-1000', first),
+    model.desktopCommentaryRequestKey('20260714-1000', reordered)
+  );
+});
+
+test('builds stock analysis deep links and identifies linked names in commentary', () => {
+  assert.equal(model.desktopStockAnalysisPath('1309'), '/stock?symbol=001309');
+  assert.equal(model.desktopStockAnalysisPath('bad'), '/stock');
+  assert.deepEqual(
+    model.desktopCommentarySegments(
+      '德赛西威领涨，德明利回撤，德赛西威仍在前排。',
+      [
+        { code: '002920', name: '德赛西威' },
+        { code: '001309', name: '德明利' }
+      ]
+    ),
+    [
+      { text: '德赛西威', stock: { code: '002920', name: '德赛西威' } },
+      { text: '领涨，' },
+      { text: '德明利', stock: { code: '001309', name: '德明利' } },
+      { text: '回撤，' },
+      { text: '德赛西威', stock: { code: '002920', name: '德赛西威' } },
+      { text: '仍在前排。' }
+    ]
+  );
+});
+
 test('builds a bounded intraday sparkline with previous-close baseline', () => {
   const geometry = model.buildDesktopIntradaySparkline([
     { time: '2026-07-15 09:30', price: 10, average: 10 },

@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from datetime import date as py_date
+from datetime import date as py_date, datetime
 from pathlib import Path
 from threading import Lock
 import time
@@ -60,6 +60,8 @@ from app.models import (
     WechatKnowledgeResponse,
     WechatSubscriptionRequest,
     WechatSubscriptionResponse,
+    WatchlistCommentaryRequest,
+    WatchlistCommentaryResponse,
 )
 from app.services.ai import build_payload, explain
 from app.services.backtest import run_backtest
@@ -78,7 +80,7 @@ from app.services.financials import AkShareFinancialProvider, run_stock_financia
 from app.services.intraday_alerts import run_intraday_alerts
 from app.services.learning import append_user_feedback, load_learning_summary, load_learning_summary_with_timeout
 from app.services.notification_settings import load_notification_settings, normalize_user_email, save_notification_settings
-from app.services.notifications import send_feishu_tip
+from app.services.notifications import send_feishu_card, send_feishu_tip
 from app.services.news_theme import empty_news_theme_scan, load_news_theme_scan, run_news_theme_scan
 from app.services.quant_engine import list_quant_runs, load_quant_run, quant_strategy_catalog, run_quant_backtest
 from app.services.screener import latest_screen_date, load_screen_report, load_screen_targets, run_screen
@@ -111,6 +113,8 @@ from app.services.wechat_knowledge import (
     wechat_capability_note,
     wechat_gateway_status,
 )
+from app.services.watchlist_commentary import generate_watchlist_commentary
+from app.services.watchlist_commentary_card import build_watchlist_commentary_card
 from app.utils import display_date, json_records, normalize_trade_date
 
 
@@ -266,6 +270,9 @@ def put_notification_settings(request: NotificationSettingsUpdate) -> Notificati
             request.user_email,
             board_exclusion_enabled=request.board_exclusion_enabled,
             excluded_boards=request.excluded_boards,
+            watchlist_commentary_feishu_enabled=request.watchlist_commentary_feishu_enabled,
+            watchlist_commentary_feishu_chat_id=request.watchlist_commentary_feishu_chat_id,
+            watchlist_commentary_platform_url=request.watchlist_commentary_platform_url,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -278,6 +285,44 @@ def test_notification(request: NotificationSettingsUpdate | None = Body(default=
         raise HTTPException(status_code=400, detail="请先在策略设置里保存通知邮箱")
     ok = send_feishu_tip("Stock Opportunity Lab 测试通知：飞书机器人已经打通。", settings.user_email)
     return ApiMessage(ok=ok, message="测试通知已发送" if ok else "通知发送失败，请检查飞书机器人配置和通知邮箱")
+
+
+@app.post(
+    "/api/notification-settings/watchlist-commentary/test",
+    response_model=ApiMessage,
+    dependencies=[Depends(require_frontend_client)],
+)
+def test_watchlist_commentary_notification(
+    request: NotificationSettingsUpdate | None = Body(default=None),
+) -> ApiMessage:
+    settings = load_notification_settings(CONFIG, request.user_email if request else None)
+    if not settings.user_email:
+        raise HTTPException(status_code=400, detail="请先在策略设置里保存通知邮箱")
+    if not settings.watchlist_commentary_feishu_chat_id or not settings.watchlist_commentary_platform_url:
+        raise HTTPException(status_code=400, detail="请先保存飞书群 ID 和平台访问地址")
+    generated_at = datetime.now().astimezone().isoformat(timespec="seconds")
+    result = generate_watchlist_commentary(
+        {
+            "slot": "feishu-card-test",
+            "captured_at": generated_at,
+            "session": "trading",
+            "is_stale": False,
+            "quotes": [
+                {"code": "002920", "name": "德赛西威", "price": 87.54, "pct_change": 1.97, "updated_at": generated_at},
+                {"code": "001309", "name": "德明利", "price": 359.15, "pct_change": -1.29, "updated_at": generated_at},
+            ],
+            "market": {"code": "000001", "name": "上证指数", "price": 3806.79, "pct_change": 0.57, "updated_at": generated_at},
+        },
+        config=CONFIG,
+    )
+    result["disclaimer"] = "测试卡片使用演示行情，不构成投资建议。"
+    card = build_watchlist_commentary_card(result, settings.watchlist_commentary_platform_url)
+    ok = send_feishu_card(card, settings.watchlist_commentary_feishu_chat_id, config=CONFIG)
+    mode_label = result.get("model") or ("外部 AI" if result.get("mode") == "external_ai" else "规则兜底")
+    return ApiMessage(
+        ok=ok,
+        message=f"测试卡片已发送到订阅群（{mode_label}）" if ok else "卡片发送失败，请检查机器人权限、群 ID 与应用凭证",
+    )
 
 
 @app.get("/api/tasks/{task_id}", response_model=TaskStatusResponse)
@@ -591,6 +636,40 @@ def market_index(refresh: bool = False) -> MarketIndexResponse:
         return MarketIndexResponse(**load_market_index(refresh=refresh))
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post(
+    "/api/watchlist-commentary",
+    response_model=WatchlistCommentaryResponse,
+    dependencies=[Depends(require_frontend_client)],
+)
+def watchlist_commentary(request: WatchlistCommentaryRequest) -> WatchlistCommentaryResponse:
+    try:
+        result = generate_watchlist_commentary(request.model_dump(), config=CONFIG)
+        result["delivery"] = deliver_watchlist_commentary(result, request)
+        return WatchlistCommentaryResponse(**result)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def deliver_watchlist_commentary(
+    result: dict[str, object],
+    request: WatchlistCommentaryRequest,
+) -> dict[str, str]:
+    if request.session != "trading":
+        return {"status": "outside_session", "message": "非连续交易时段，本次锐评未推送到群聊"}
+    if not request.user_email:
+        return {"status": "unconfigured", "message": "未登录通知账户，本次锐评仅在悬浮窗展示"}
+    settings = load_notification_settings(CONFIG, request.user_email)
+    if not settings.watchlist_commentary_feishu_enabled:
+        return {"status": "disabled", "message": "飞书群订阅未开启"}
+    if not settings.watchlist_commentary_feishu_chat_id or not settings.watchlist_commentary_platform_url:
+        return {"status": "unconfigured", "message": "飞书群订阅配置不完整"}
+    card = build_watchlist_commentary_card(result, settings.watchlist_commentary_platform_url)
+    sent = send_feishu_card(card, settings.watchlist_commentary_feishu_chat_id, config=CONFIG)
+    if sent:
+        return {"status": "sent", "message": "飞书卡片已发送到订阅群"}
+    return {"status": "failed", "message": "飞书卡片发送失败，请检查机器人权限、群 ID 与应用凭证"}
 
 
 @app.get("/api/stock-kline", response_model=StockKlineResponse)

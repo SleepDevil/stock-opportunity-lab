@@ -1167,14 +1167,96 @@ export type MarketIndexResponse = {
   points: MarketIndexPoint[];
 };
 
+export type WatchlistCommentaryQuote = {
+  code: string;
+  name: string;
+  price?: number | null;
+  pct_change?: number | null;
+  change?: number | null;
+  amount?: number | null;
+  turnover?: number | null;
+  high?: number | null;
+  low?: number | null;
+  open?: number | null;
+  previous_close?: number | null;
+  updated_at?: string | null;
+};
+
+export type WatchlistCommentaryRequest = {
+  slot: string;
+  captured_at: string;
+  user_email?: string | null;
+  session: 'preopen' | 'trading' | 'break' | 'closed';
+  is_stale?: boolean;
+  quotes: WatchlistCommentaryQuote[];
+  market?: {
+    code: string;
+    name: string;
+    price?: number | null;
+    pct_change?: number | null;
+    change?: number | null;
+    amount?: number | null;
+    updated_at?: string | null;
+  } | null;
+};
+
+export type WatchlistCommentaryMover = {
+  code: string;
+  name: string;
+  pct_change: number;
+};
+
+export type WatchlistCommentaryResponse = {
+  trade_date: string;
+  slot: string;
+  generated_at: string;
+  source_updated_at?: string | null;
+  mode: 'external_ai' | 'rules_fallback';
+  provider: 'zhipu' | 'external_command' | 'rules_fallback';
+  model?: string | null;
+  title: string;
+  commentary: string;
+  stocks: Array<{
+    code: string;
+    name: string;
+    price?: number | null;
+    pct_change?: number | null;
+  }>;
+  summary: {
+    total: number;
+    measured: number;
+    rising: number;
+    falling: number;
+    flat: number;
+    average_pct?: number | null;
+    leader?: WatchlistCommentaryMover | null;
+    laggard?: WatchlistCommentaryMover | null;
+  };
+  note?: string | null;
+  disclaimer: string;
+  delivery: {
+    status: 'sent' | 'disabled' | 'unconfigured' | 'outside_session' | 'failed';
+    message: string;
+  };
+};
+
 export type AppConfig = {
   data_dir: string;
   screen: Record<string, unknown>;
   strategy: Record<string, unknown>;
+  ai?: {
+    configured: boolean;
+    provider: 'zhipu' | 'external_command' | 'rules_fallback';
+    requested_provider: 'auto' | 'zhipu' | 'command' | 'rules';
+    model?: string | null;
+  };
 };
 
 export type NotificationSettings = {
   user_email?: string | null;
   board_exclusion_enabled?: boolean;
   excluded_boards?: string[];
+  watchlist_commentary_feishu_enabled?: boolean | null;
+  watchlist_commentary_feishu_chat_id?: string | null;
+  watchlist_commentary_platform_url?: string | null;
 };

@@ -49,10 +49,18 @@ STOCK_LAB_DATABASE_URL=postgresql://USER:PASSWORD@HOST/DB?sslmode=require
 STOCK_LAB_CLIENT_AUTH_SECRET=replace-with-a-random-secret
 STOCK_LAB_FEISHU_APP_ID=optional-app-id
 STOCK_LAB_FEISHU_APP_SECRET=optional-app-secret
-STOCK_LAB_AI_COMMAND=optional-command
+STOCK_LAB_AI_PROVIDER=auto
+STOCK_LAB_ZHIPU_API_KEY=your-zhipu-api-key
+STOCK_LAB_ZHIPU_MODEL=glm-4.7-flash
+STOCK_LAB_AI_TIMEOUT_SECONDS=30
+STOCK_LAB_AI_COMMAND=optional-legacy-command
 ```
 
 未配置数据库连接时使用 `data/stock_lab.sqlite3`。本地开发命令默认忽略远程数据库地址，避免误连生产数据。
+
+自选锐评默认在检测到 `STOCK_LAB_ZHIPU_API_KEY` 后调用智谱 `glm-4.7-flash`；未配置密钥、请求超时或模型限流时自动使用行情规则代笔。`STOCK_LAB_AI_PROVIDER=command` 可继续使用旧的命令适配器，`rules` 可强制关闭模型调用。API Key 只在后端读取，不会进入前端 Bundle、接口响应或日志。
+
+打包后的桌面客户端还会从其应用数据目录下的 `.env` 读取这些服务端密钥。该文件位于用户私有数据目录、不会打入安装包；操作系统环境变量优先于文件内容。
 
 ## 桌面客户端
 

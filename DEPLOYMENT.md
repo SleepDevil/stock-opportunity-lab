@@ -37,9 +37,19 @@ curl -fsS http://127.0.0.1:8000/api/health
 | `STOCK_LAB_CLIENT_AUTH_SECRET` | CSRF/HMAC 签名密钥，生产环境必须使用随机值 |
 | `STOCK_LAB_FEISHU_APP_ID` | 可选通知应用 ID |
 | `STOCK_LAB_FEISHU_APP_SECRET` | 可选通知应用密钥 |
-| `STOCK_LAB_AI_COMMAND` | 可选外部 AI 命令适配器 |
+| `STOCK_LAB_WATCHLIST_COMMENTARY_FEISHU_ENABLED` | 是否默认开启自选锐评群推送；`true`/`false` |
+| `STOCK_LAB_WATCHLIST_COMMENTARY_FEISHU_CHAT_ID` | 默认订阅群；支持数字群 ID 或 `oc_` 开头的 open_chat_id |
+| `STOCK_LAB_WATCHLIST_COMMENTARY_PLATFORM_URL` | 卡片内个股分析链接的网站根地址 |
+| `STOCK_LAB_AI_PROVIDER` | 锐评生成后端：`auto`、`zhipu`、`command` 或 `rules`；默认 `auto` |
+| `STOCK_LAB_ZHIPU_API_KEY` | 智谱开放平台 API Key；配置后默认调用免费模型 |
+| `STOCK_LAB_ZHIPU_MODEL` | 智谱模型编码，默认 `glm-4.7-flash` |
+| `STOCK_LAB_ZHIPU_BASE_URL` | 可选智谱兼容端点，默认官方 `https://open.bigmodel.cn/api/paas/v4` |
+| `STOCK_LAB_AI_TIMEOUT_SECONDS` | 模型请求超时，默认 30 秒，限制在 3—120 秒 |
+| `STOCK_LAB_AI_COMMAND` | 兼容旧版的可选外部 AI 命令适配器 |
 
 所有密钥必须由部署平台的 Secret 管理，不得写入镜像、前端 Bundle、日志或 Git 仓库。
+
+`auto` 模式优先使用智谱 API，其次使用已配置的旧命令适配器，最后降级为行情规则。生产环境建议保留该默认值，避免模型临时限流导致定时锐评整体失败。
 
 ## 数据持久化
 

@@ -3,11 +3,16 @@ import { Badge, Button, Checkbox, Group, Paper, SimpleGrid, Stack, Switch, Text,
 import { notifications } from '@mantine/notifications';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
-import { Mail, Send, Settings2 } from 'lucide-react';
+import { Bot, Link2, Mail, MessageSquareText, Send, Settings2 } from 'lucide-react';
 
 import { ConfigPanel } from '../../components/ConfigPanel';
-import { fetchNotificationSettings, saveNotificationSettings, sendTestNotification } from '../../lib/api';
-import type { AppConfig } from '../../types/api';
+import {
+  fetchNotificationSettings,
+  saveNotificationSettings,
+  sendTestNotification,
+  sendTestWatchlistCommentaryNotification
+} from '../../lib/api';
+import type { AppConfig, NotificationSettings } from '../../types/api';
 import {
   boardOptions,
   defaultScreenPreferences,
@@ -41,6 +46,9 @@ export function SettingsPage({
     queryFn: () => fetchNotificationSettings(userEmail || undefined)
   });
   const [notificationEmail, setNotificationEmail] = useState(normalizeEmailInput(userEmail));
+  const [watchlistFeishuEnabled, setWatchlistFeishuEnabled] = useState(false);
+  const [watchlistFeishuChatId, setWatchlistFeishuChatId] = useState('');
+  const [watchlistPlatformUrl, setWatchlistPlatformUrl] = useState('');
   const saveNotificationMutation = useMutation({
     mutationFn: saveNotificationSettings,
     onSuccess: (result) => {
@@ -54,8 +62,10 @@ export function SettingsPage({
       queryClient.setQueryData(['notification-settings', savedEmail], result);
       notifications.show({
         color: 'teal',
-        title: '账户设置已保存',
-        message: result.user_email ? `后续任务会按 ${result.user_email} 的偏好运行并通知。` : '请填写邮箱作为登录标识。'
+        title: '设置已保存',
+        message: result.watchlist_commentary_feishu_enabled
+          ? `自选锐评会推送到群 ${result.watchlist_commentary_feishu_chat_id}。`
+          : `后续任务会按 ${result.user_email} 的偏好运行。`
       });
     },
     onError: (error) => {
@@ -83,9 +93,33 @@ export function SettingsPage({
       });
     }
   });
+  const testWatchlistNotificationMutation = useMutation({
+    mutationFn: sendTestWatchlistCommentaryNotification,
+    onSuccess: (result) => {
+      notifications.show({
+        color: result.ok ? 'teal' : 'orange',
+        title: result.ok ? '测试卡片已发送' : '测试卡片未发送',
+        message: result.message
+      });
+    },
+    onError: (error) => {
+      notifications.show({
+        color: 'red',
+        title: '测试卡片发送失败',
+        message: error instanceof Error ? error.message : '飞书卡片接口返回异常'
+      });
+    }
+  });
   const activeLabels = boardOptions.filter((item) => screenPreferences.excludedBoards.includes(item.value)).map((item) => item.label);
   const requestPreview = screenPreferences.boardExclusionEnabled ? screenPreferences.excludedBoards : [];
   const effectiveNotificationEmail = normalizeEmailInput(userEmail || notificationEmail);
+  const aiConfigured = Boolean(config?.ai?.configured);
+  const aiModelLabel = config?.ai?.model || (config?.ai?.provider === 'external_command' ? '外部 AI' : '智谱 GLM');
+  const savedWatchlistConfigMatches = Boolean(
+    notificationQuery.data?.user_email === effectiveNotificationEmail
+    && (notificationQuery.data.watchlist_commentary_feishu_chat_id ?? '') === watchlistFeishuChatId.trim()
+    && (notificationQuery.data.watchlist_commentary_platform_url ?? '') === watchlistPlatformUrl.trim()
+  );
 
   useEffect(() => {
     if (!userEmail) {
@@ -96,9 +130,13 @@ export function SettingsPage({
 
   useEffect(() => {
     const data = notificationQuery.data;
-    if (!data?.user_email) {
+    if (!data) {
       return;
     }
+    setWatchlistFeishuEnabled(Boolean(data.watchlist_commentary_feishu_enabled));
+    setWatchlistFeishuChatId(data.watchlist_commentary_feishu_chat_id ?? '');
+    setWatchlistPlatformUrl(data.watchlist_commentary_platform_url ?? '');
+    if (!data.user_email) return;
     setNotificationEmail(normalizeEmailInput(data.user_email));
     setScreenPreferences({
       boardExclusionEnabled: Boolean(data.board_exclusion_enabled),
@@ -112,6 +150,17 @@ export function SettingsPage({
       ...patch,
       excludedBoards: patch.excludedBoards ? sanitizeBoards(patch.excludedBoards) : screenPreferences.excludedBoards
     });
+  }
+
+  function notificationSettingsPayload(): NotificationSettings {
+    return {
+      user_email: normalizeEmailInput(notificationEmail),
+      board_exclusion_enabled: screenPreferences.boardExclusionEnabled,
+      excluded_boards: requestPreview,
+      watchlist_commentary_feishu_enabled: watchlistFeishuEnabled,
+      watchlist_commentary_feishu_chat_id: watchlistFeishuChatId.trim() || null,
+      watchlist_commentary_platform_url: watchlistPlatformUrl.trim() || null
+    };
   }
 
   return (
@@ -215,12 +264,8 @@ export function SettingsPage({
               variant="filled"
               leftSection={<Settings2 size={16} />}
               loading={saveNotificationMutation.isPending}
-              disabled={!normalizeEmailInput(notificationEmail)}
-              onClick={() => saveNotificationMutation.mutate({
-                user_email: normalizeEmailInput(notificationEmail),
-                board_exclusion_enabled: screenPreferences.boardExclusionEnabled,
-                excluded_boards: requestPreview
-              })}
+              disabled={notificationQuery.isLoading || !normalizeEmailInput(notificationEmail)}
+              onClick={() => saveNotificationMutation.mutate(notificationSettingsPayload())}
             >
               保存账户设置
             </Button>
@@ -236,6 +281,88 @@ export function SettingsPage({
             </Button>
           </div>
         </SimpleGrid>
+      </Paper>
+
+      <Paper className="settings-card watchlist-feishu-settings" withBorder>
+        <Group justify="space-between" align="flex-start" mb="md">
+          <Group gap="sm" align="flex-start" wrap="nowrap">
+            <ThemeIcon color="teal" variant="light" size="lg"><Bot size={19} /></ThemeIcon>
+            <div>
+              <Text fw={900}>自选锐评群订阅</Text>
+              <Text size="sm" c="dimmed">每个交易时段锐评生成后，以飞书 Card 2.0 推送到指定群聊。</Text>
+            </div>
+          </Group>
+          <Group gap="xs">
+            <Badge color={aiConfigured ? 'violet' : 'orange'} variant="light">
+              {configLoading ? '检测模型配置' : aiConfigured ? `${aiModelLabel} 已接入` : '规则兜底'}
+            </Badge>
+            <Badge color={watchlistFeishuEnabled ? 'teal' : 'gray'} variant="light">
+              {watchlistFeishuEnabled ? '自动推送' : '仅本地展示'}
+            </Badge>
+          </Group>
+        </Group>
+
+        <div className="watchlist-feishu-switch-row">
+          <Switch
+            label="开启自选锐评飞书群推送"
+            description="只在 A 股连续交易时段生成锐评后发送；午休和收盘后不推送。"
+            checked={watchlistFeishuEnabled}
+            onChange={(event) => setWatchlistFeishuEnabled(event.currentTarget.checked)}
+          />
+        </div>
+
+        <SimpleGrid cols={{ base: 1, md: 2 }} spacing="sm" mt="md">
+          <TextInput
+            label="订阅群 ID"
+            description="支持数字群 ID 或 oc_ 开头的 open_chat_id；发送时会自动转换。"
+            placeholder="7650… 或 oc_xxxxxxxxxxxxxxxx"
+            value={watchlistFeishuChatId}
+            leftSection={<MessageSquareText size={15} />}
+            onChange={(event) => setWatchlistFeishuChatId(event.currentTarget.value)}
+          />
+          <TextInput
+            label="平台访问地址"
+            description="群成员可访问的网站根地址，用于拼接个股详情链接。"
+            placeholder="https://stock.example.com"
+            value={watchlistPlatformUrl}
+            leftSection={<Link2 size={15} />}
+            onChange={(event) => setWatchlistPlatformUrl(event.currentTarget.value)}
+          />
+        </SimpleGrid>
+
+        <div className="watchlist-feishu-flow" aria-label="锐评群推送流程">
+          <span>半小时行情快照</span><i>→</i><span>AI 风趣锐评</span><i>→</i><span>飞书群卡片</span><i>→</i><span>点击股票看走势</span>
+        </div>
+        <Text size="xs" c="dimmed" mt="xs">
+          当前生成引擎：{aiConfigured ? aiModelLabel : '行情规则代笔'}。模型 API Key 仅从服务端环境变量读取，不会保存到页面或下发到浏览器。
+        </Text>
+
+        <Group justify="space-between" align="flex-end" mt="md" gap="md">
+          <Text size="xs" c="dimmed" className="watchlist-feishu-permission-note">
+            机器人需已加入目标群，并具备 im:message 发送消息权限；修改配置后请先保存，再发送测试卡片。
+          </Text>
+          <Group gap="xs" wrap="nowrap">
+            <Button
+              color="dark"
+              leftSection={<Settings2 size={16} />}
+              loading={saveNotificationMutation.isPending}
+              disabled={notificationQuery.isLoading || !normalizeEmailInput(notificationEmail) || (watchlistFeishuEnabled && (!watchlistFeishuChatId.trim() || !watchlistPlatformUrl.trim()))}
+              onClick={() => saveNotificationMutation.mutate(notificationSettingsPayload())}
+            >
+              保存群订阅
+            </Button>
+            <Button
+              color="teal"
+              variant="light"
+              leftSection={<Send size={16} />}
+              loading={testWatchlistNotificationMutation.isPending}
+              disabled={!effectiveNotificationEmail || !watchlistFeishuChatId.trim() || !watchlistPlatformUrl.trim() || !savedWatchlistConfigMatches}
+              onClick={() => testWatchlistNotificationMutation.mutate(effectiveNotificationEmail)}
+            >
+              测试模型与卡片
+            </Button>
+          </Group>
+        </Group>
       </Paper>
 
       <Paper className="settings-card" withBorder>

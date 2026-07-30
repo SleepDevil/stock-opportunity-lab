@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 import urllib.request
 
 from app.config import CONFIG, AppConfig
@@ -32,6 +33,31 @@ def send_feishu_tip(
         if not open_id:
             return False
         return send_text_message(open_id, msg, token, timeout=timeout)
+    except Exception:
+        return False
+
+
+def send_feishu_card(
+    card: dict[str, Any],
+    chat_id: str | None,
+    *,
+    config: AppConfig | None = None,
+    timeout: float = 8.0,
+) -> bool:
+    recipient = (chat_id or "").strip()
+    if not recipient:
+        return False
+
+    app_config = config or CONFIG
+    app_id = app_config.feishu_app_id.strip()
+    app_secret = (app_config.feishu_app_secret or "").strip()
+    if not app_id or not app_secret:
+        return False
+
+    try:
+        token = tenant_access_token(app_id, app_secret, timeout=timeout)
+        open_chat_id = resolve_open_chat_id(recipient, token, timeout=timeout)
+        return send_interactive_message(open_chat_id, card, token, timeout=timeout)
     except Exception:
         return False
 
@@ -69,6 +95,25 @@ def user_open_id_by_email(email: str, token: str, *, timeout: float = 8.0) -> st
     return user_id if isinstance(user_id, str) and user_id else None
 
 
+def resolve_open_chat_id(chat_id: str, token: str, *, timeout: float = 8.0) -> str:
+    normalized = chat_id.strip()
+    if normalized.startswith("oc_"):
+        return normalized
+    if not normalized.isdigit():
+        raise ValueError("飞书群 ID 应为数字群 ID 或以 oc_ 开头的 open_chat_id")
+
+    response = post_json(
+        f"{FEISHU_API_BASE}/exchange/v3/cid2ocid/",
+        {"chat_id": normalized},
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=timeout,
+    )
+    open_chat_id = response.get("open_chat_id")
+    if response.get("code") != 0 or not isinstance(open_chat_id, str) or not open_chat_id.startswith("oc_"):
+        raise RuntimeError(feishu_error_message("数字群 ID 换取 open_chat_id 失败", response))
+    return open_chat_id
+
+
 def send_text_message(open_id: str, msg: str, token: str, *, timeout: float = 8.0) -> bool:
     content = json.dumps({"text": f'<at user_id="{open_id}"></at> {msg}'}, ensure_ascii=False)
     response = post_json(
@@ -77,6 +122,26 @@ def send_text_message(open_id: str, msg: str, token: str, *, timeout: float = 8.
             "receive_id": open_id,
             "msg_type": "text",
             "content": content,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=timeout,
+    )
+    return response.get("code") == 0
+
+
+def send_interactive_message(
+    chat_id: str,
+    card: dict[str, Any],
+    token: str,
+    *,
+    timeout: float = 8.0,
+) -> bool:
+    response = post_json(
+        f"{FEISHU_API_BASE}/im/v1/messages?receive_id_type=chat_id",
+        {
+            "receive_id": chat_id,
+            "msg_type": "interactive",
+            "content": json.dumps(card, ensure_ascii=False),
         },
         headers={"Authorization": f"Bearer {token}"},
         timeout=timeout,

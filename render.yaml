@@ -14,7 +14,19 @@ services:
         sync: false
       - key: STOCK_LAB_FEISHU_APP_SECRET
         sync: false
+      - key: STOCK_LAB_WATCHLIST_COMMENTARY_FEISHU_ENABLED
+        value: "false"
+      - key: STOCK_LAB_WATCHLIST_COMMENTARY_FEISHU_CHAT_ID
+        sync: false
+      - key: STOCK_LAB_WATCHLIST_COMMENTARY_PLATFORM_URL
+        sync: false
       - key: STOCK_LAB_CLIENT_AUTH_SECRET
         sync: false
+      - key: STOCK_LAB_AI_PROVIDER
+        value: auto
+      - key: STOCK_LAB_ZHIPU_API_KEY
+        sync: false
+      - key: STOCK_LAB_ZHIPU_MODEL
+        value: glm-4.7-flash
       - key: PYTHONUNBUFFERED
         value: "1"

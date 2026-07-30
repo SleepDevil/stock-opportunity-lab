@@ -44,7 +44,9 @@ import type {
   WechatKnowledgeSyncResponse,
   WechatKnowledgeResponse,
   WechatSubscription,
-  WechatSubscriptionRequest
+  WechatSubscriptionRequest,
+  WatchlistCommentaryRequest,
+  WatchlistCommentaryResponse
 } from '../types/api';
 import { apiRequestCredentials, resolveApiUrl } from './runtime';
 import { isStaticMode, staticRequest } from './staticApi';
@@ -75,7 +77,7 @@ async function clientAuthToken(): Promise<string> {
 }
 
 function requiresClientAuth(path: string): boolean {
-  return path.startsWith('/api/notification-settings');
+  return path.startsWith('/api/notification-settings') || path.startsWith('/api/watchlist-commentary');
 }
 
 function readableHttpError(response: Response, message: string): Error {
@@ -397,6 +399,18 @@ export function fetchMarketIndex(input: {
   return request<MarketIndexResponse>(`/api/market-index${query ? `?${query}` : ''}`, { signal: input.signal });
 }
 
+export function fetchWatchlistCommentary(
+  input: WatchlistCommentaryRequest,
+  signal?: AbortSignal
+): Promise<WatchlistCommentaryResponse> {
+  return request<WatchlistCommentaryResponse>('/api/watchlist-commentary', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(input),
+    signal
+  });
+}
+
 export function fetchStockKline(input: {
   query: string;
   date?: string;
@@ -534,6 +548,14 @@ export function saveNotificationSettings(input: NotificationSettings): Promise<N
 
 export function sendTestNotification(userEmail: string): Promise<{ ok: boolean; message: string }> {
   return request<{ ok: boolean; message: string }>('/api/notification-settings/test', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ user_email: userEmail })
+  });
+}
+
+export function sendTestWatchlistCommentaryNotification(userEmail: string): Promise<{ ok: boolean; message: string }> {
+  return request<{ ok: boolean; message: string }>('/api/notification-settings/watchlist-commentary/test', {
     method: 'POST',
     headers,
     body: JSON.stringify({ user_email: userEmail })

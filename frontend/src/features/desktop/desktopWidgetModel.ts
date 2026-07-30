@@ -24,6 +24,17 @@ export type DesktopWatchlistSortMode = 'manual' | 'gain-desc' | 'gain-asc';
 
 export type DesktopMarketSession = 'preopen' | 'trading' | 'break' | 'closed';
 
+export type DesktopCommentarySlot = {
+  key: string;
+  label: string;
+  nextLabel: string | null;
+};
+
+export type DesktopCommentarySegment = {
+  text: string;
+  stock?: DesktopWatchStock;
+};
+
 export type DesktopSparklineGeometry = {
   pricePoints: string;
   averagePoints: string | null;
@@ -177,18 +188,47 @@ export function sortDesktopWatchlist(
     .map(({ stock }) => stock);
 }
 
-export function desktopMarketSession(now: Date): DesktopMarketSession {
+function desktopShanghaiClockParts(now: Date): {
+  weekday?: string;
+  dateKey: string;
+  hour: number;
+  minute: number;
+} {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: 'Asia/Shanghai',
     weekday: 'short',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
     hourCycle: 'h23'
   }).formatToParts(now);
   const weekday = parts.find((part) => part.type === 'weekday')?.value;
+  const year = parts.find((part) => part.type === 'year')?.value ?? '0000';
+  const month = parts.find((part) => part.type === 'month')?.value ?? '00';
+  const day = parts.find((part) => part.type === 'day')?.value ?? '00';
+  return {
+    weekday,
+    dateKey: `${year}${month}${day}`,
+    hour: Number(parts.find((part) => part.type === 'hour')?.value ?? 0),
+    minute: Number(parts.find((part) => part.type === 'minute')?.value ?? 0)
+  };
+}
+
+export function desktopShanghaiDateKey(now: Date): string {
+  return desktopShanghaiClockParts(now).dateKey;
+}
+
+export function desktopTimestampMatchesShanghaiDate(value: string | null | undefined, now: Date): boolean {
+  if (!value) return false;
+  const parsed = new Date(value);
+  return !Number.isNaN(parsed.getTime()) && desktopShanghaiDateKey(parsed) === desktopShanghaiDateKey(now);
+}
+
+export function desktopMarketSession(now: Date): DesktopMarketSession {
+  const { weekday, hour, minute } = desktopShanghaiClockParts(now);
   if (weekday === 'Sat' || weekday === 'Sun') return 'closed';
-  const hour = Number(parts.find((part) => part.type === 'hour')?.value ?? 0);
-  const minute = Number(parts.find((part) => part.type === 'minute')?.value ?? 0);
   const minutes = hour * 60 + minute;
   if (minutes >= 9 * 60 + 15 && minutes < 9 * 60 + 30) return 'preopen';
   if (
@@ -204,6 +244,72 @@ export function desktopQuoteRefreshInterval(now: Date): number | false {
   if (session === 'trading') return 15_000;
   if (session === 'preopen') return 30_000;
   return false;
+}
+
+function desktopClockLabel(minutes: number): string {
+  return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+}
+
+export function desktopCommentarySlot(now: Date): DesktopCommentarySlot | null {
+  if (desktopMarketSession(now) !== 'trading') return null;
+  const { dateKey, hour, minute } = desktopShanghaiClockParts(now);
+  const slotMinutes = hour * 60 + Math.floor(minute / 30) * 30;
+  let nextMinutes: number | null = null;
+  if (slotMinutes < 11 * 60 + 30) {
+    nextMinutes = slotMinutes + 30;
+  } else if (slotMinutes === 11 * 60 + 30) {
+    nextMinutes = 13 * 60;
+  } else if (slotMinutes < 15 * 60) {
+    nextMinutes = slotMinutes + 30;
+  }
+  const label = desktopClockLabel(slotMinutes);
+  return {
+    key: `${dateKey}-${label.replace(':', '')}`,
+    label,
+    nextLabel: nextMinutes == null ? null : desktopClockLabel(nextMinutes)
+  };
+}
+
+export function desktopCommentaryWatchlistKey(watchlist: DesktopWatchStock[]): string {
+  return normalizeDesktopWatchlist(watchlist)
+    .map((stock) => stock.code)
+    .sort()
+    .join(',');
+}
+
+export function desktopCommentaryRequestKey(slotKey: string, watchlist: DesktopWatchStock[]): string {
+  return `${slotKey}|${desktopCommentaryWatchlistKey(watchlist)}`;
+}
+
+export function desktopStockAnalysisPath(code: string): string {
+  const normalized = code.trim().padStart(6, '0');
+  return /^\d{6}$/.test(normalized)
+    ? `/stock?symbol=${encodeURIComponent(normalized)}`
+    : '/stock';
+}
+
+export function desktopCommentarySegments(
+  commentary: string,
+  stocks: Array<{ code: string; name: string }>
+): DesktopCommentarySegment[] {
+  const normalized = normalizeDesktopWatchlist(stocks);
+  if (!commentary || !normalized.length) return commentary ? [{ text: commentary }] : [];
+  const stockByName = new Map(normalized.map((stock) => [stock.name, stock]));
+  const escapedNames = [...stockByName.keys()]
+    .sort((left, right) => right.length - left.length)
+    .map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  const pattern = new RegExp(escapedNames.join('|'), 'g');
+  const segments: DesktopCommentarySegment[] = [];
+  let cursor = 0;
+  for (const match of commentary.matchAll(pattern)) {
+    const index = match.index ?? 0;
+    if (index > cursor) segments.push({ text: commentary.slice(cursor, index) });
+    const stock = stockByName.get(match[0]);
+    segments.push(stock ? { text: match[0], stock } : { text: match[0] });
+    cursor = index + match[0].length;
+  }
+  if (cursor < commentary.length) segments.push({ text: commentary.slice(cursor) });
+  return segments;
 }
 
 export function desktopMarketSessionLabel(session: DesktopMarketSession): string {

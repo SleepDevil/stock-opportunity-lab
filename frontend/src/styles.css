@@ -179,7 +179,7 @@ html[data-desktop-widget] #root {
 
 .desktop-widget-tabs {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   padding: 4px 8px 0;
   background: #ffffff;
   border-bottom: 1px solid var(--widget-border);
@@ -318,6 +318,19 @@ html[data-desktop-widget] #root {
 
 .desktop-widget-summary strong.is-up {
   color: #d64545;
+}
+
+.desktop-widget-summary strong.is-down {
+  color: #07856b;
+}
+
+.desktop-widget-summary.is-commentary {
+  background: #f1f6fa;
+  border-bottom-color: #cbd9e5;
+}
+
+.desktop-widget-summary.is-commentary div {
+  border-right-color: #d4e0e9;
 }
 
 .desktop-widget-market {
@@ -1042,6 +1055,315 @@ html[data-desktop-widget] #root {
   opacity: 1;
 }
 
+.desktop-widget-commentary {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-height: 100%;
+  padding: 12px;
+  background:
+    linear-gradient(180deg, #edf3f7 0, #f8fafc 220px);
+}
+
+.desktop-commentary-note {
+  position: relative;
+  display: grid;
+  gap: 11px;
+  padding: 14px 14px 12px 17px;
+  overflow: hidden;
+  background: #ffffff;
+  border: 1px solid #cbd9e4;
+  border-radius: 8px;
+  box-shadow: 0 7px 18px rgb(25 48 70 / 8%);
+}
+
+.desktop-commentary-note::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 4px;
+  background: repeating-linear-gradient(to bottom, #637f96 0 8px, #b9c9d5 8px 11px);
+  content: '';
+}
+
+.desktop-commentary-note.is-up::before {
+  background: repeating-linear-gradient(to bottom, #d64545 0 8px, #f0b4b4 8px 11px);
+}
+
+.desktop-commentary-note.is-down::before {
+  background: repeating-linear-gradient(to bottom, #07856b 0 8px, #91cbbb 8px 11px);
+}
+
+.desktop-commentary-note > header,
+.desktop-commentary-note > footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.desktop-commentary-mode,
+.desktop-commentary-time {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #65778a;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.desktop-commentary-mode {
+  padding: 3px 7px;
+  color: #08745f;
+  letter-spacing: 0.04em;
+  background: #e5f5f0;
+  border: 1px solid #bfe2d8;
+  border-radius: 999px;
+}
+
+.desktop-commentary-note h2 {
+  margin: 0;
+  color: #102b43;
+  font-family: "Avenir Next Condensed", "Arial Narrow", ui-sans-serif, system-ui, sans-serif;
+  font-size: 20px;
+  font-weight: 850;
+  line-height: 1.2;
+  letter-spacing: -0.015em;
+}
+
+.desktop-commentary-note > p {
+  position: relative;
+  z-index: 1;
+  margin: 0;
+  color: #2e4256;
+  font-size: 13px;
+  line-height: 1.8;
+  white-space: pre-line;
+  user-select: text;
+}
+
+.desktop-commentary-note > p a {
+  color: #0b6f9f;
+  font-weight: 850;
+  text-decoration: underline;
+  text-decoration-color: rgb(11 111 159 / 28%);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+.desktop-commentary-note > p a:hover {
+  color: #084f75;
+  text-decoration-color: currentColor;
+}
+
+.desktop-commentary-note > p::after {
+  position: absolute;
+  z-index: -1;
+  right: -2px;
+  bottom: -20px;
+  color: rgb(18 62 91 / 6%);
+  font-family: Georgia, serif;
+  font-size: 84px;
+  line-height: 1;
+  content: '”';
+  pointer-events: none;
+}
+
+.desktop-commentary-note > footer {
+  padding-top: 9px;
+  color: #718195;
+  font-size: 10px;
+  border-top: 1px dashed #d9e2e9;
+}
+
+.desktop-commentary-note > footer button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 0;
+  color: #1167a8;
+  font-weight: 800;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.desktop-commentary-note > footer button:disabled {
+  opacity: 0.48;
+  cursor: default;
+}
+
+.desktop-commentary-movers {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.desktop-commentary-movers > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 3px 8px;
+  min-width: 0;
+  padding: 10px;
+  background: #ffffff;
+  border: 1px solid #d9e2ea;
+  border-radius: 7px;
+}
+
+.desktop-commentary-movers span {
+  display: inline-flex;
+  grid-column: 1 / 3;
+  align-items: center;
+  gap: 4px;
+  color: #718195;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.desktop-commentary-movers strong {
+  overflow: hidden;
+  color: #253b50;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.desktop-commentary-movers a {
+  min-width: 0;
+  color: inherit;
+  text-decoration: none;
+}
+
+.desktop-commentary-movers a:hover strong {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.desktop-commentary-movers em {
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 850;
+  font-variant-numeric: tabular-nums;
+}
+
+.desktop-commentary-movers .is-up span,
+.desktop-commentary-movers .is-up em {
+  color: #d64545;
+}
+
+.desktop-commentary-movers .is-down span,
+.desktop-commentary-movers .is-down em {
+  color: #07856b;
+}
+
+.desktop-commentary-stock-links {
+  display: grid;
+  gap: 6px;
+  padding: 9px 10px;
+  background: #fff;
+  border: 1px solid #d9e2ea;
+  border-radius: 7px;
+}
+
+.desktop-commentary-stock-links > span {
+  color: #718195;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.desktop-commentary-stock-links > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.desktop-commentary-stock-links a {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 6px;
+  color: #1f405a;
+  font-size: 10px;
+  font-weight: 850;
+  text-decoration: none;
+  background: #f2f6f8;
+  border: 1px solid #dce5eb;
+  border-radius: 4px;
+}
+
+.desktop-commentary-stock-links a:hover {
+  color: #0b6f9f;
+  border-color: #a9cadb;
+}
+
+.desktop-commentary-stock-links em {
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+}
+
+.desktop-commentary-stock-links em.is-up {
+  color: #d64545;
+}
+
+.desktop-commentary-stock-links em.is-down {
+  color: #07856b;
+}
+
+.desktop-commentary-note-text,
+.desktop-commentary-source {
+  margin: 0;
+  user-select: text;
+}
+
+.desktop-commentary-note-text {
+  padding: 7px 9px;
+  color: #89530b;
+  font-size: 10px;
+  line-height: 15px;
+  background: #fff7e8;
+  border: 1px solid #f1dab4;
+  border-radius: 6px;
+}
+
+.desktop-commentary-note-text.is-error {
+  color: #b13a3a;
+  background: #fff1f1;
+  border-color: #efc5c5;
+}
+
+.desktop-commentary-delivery {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+  padding: 7px 9px;
+  font-size: 10px;
+  font-weight: 800;
+  border: 1px solid;
+  border-radius: 6px;
+}
+
+.desktop-commentary-delivery.is-sent {
+  color: #08745f;
+  background: #e8f6f1;
+  border-color: #bfe2d8;
+}
+
+.desktop-commentary-delivery.is-failed {
+  color: #b13a3a;
+  background: #fff1f1;
+  border-color: #efc5c5;
+}
+
+.desktop-commentary-source {
+  padding: 0 2px;
+  color: #8291a1;
+  font-size: 9px;
+  line-height: 14px;
+}
+
 .desktop-stock-picker {
   padding: 10px;
 }
@@ -1566,6 +1888,78 @@ button {
 
 .notification-actions button {
   flex: 1;
+}
+
+.watchlist-feishu-settings {
+  position: relative;
+  overflow: hidden;
+}
+
+.watchlist-feishu-settings::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 4px;
+  background: linear-gradient(180deg, #0b8f78, #49b79f);
+  content: '';
+}
+
+.watchlist-feishu-switch-row {
+  padding: 12px;
+  background: linear-gradient(90deg, #eaf7f3, #f7fbfa);
+  border: 1px solid #cce8df;
+  border-radius: 8px;
+}
+
+.watchlist-feishu-flow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+  padding: 9px 11px;
+  overflow-x: auto;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 850;
+  white-space: nowrap;
+  background: var(--surface-soft);
+  border: 1px dashed var(--line);
+  border-radius: 7px;
+}
+
+.watchlist-feishu-flow span {
+  color: var(--ink);
+}
+
+.watchlist-feishu-flow i {
+  color: #0b8f78;
+  font-style: normal;
+}
+
+.watchlist-feishu-permission-note {
+  max-width: 520px;
+  line-height: 1.5;
+}
+
+@media (max-width: 720px) {
+  .watchlist-feishu-flow {
+    flex-wrap: wrap;
+    white-space: normal;
+  }
+
+  .watchlist-feishu-settings > .mantine-Group-root:last-child {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .watchlist-feishu-settings > .mantine-Group-root:last-child > .mantine-Group-root {
+    width: 100%;
+  }
+
+  .watchlist-feishu-settings > .mantine-Group-root:last-child button {
+    flex: 1;
+  }
 }
 
 .status-tile {

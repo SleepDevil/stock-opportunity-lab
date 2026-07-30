@@ -269,18 +269,46 @@ def test_app_config_loads_project_dotenv(tmp_path: Path, monkeypatch) -> None:
     assert config_module.AppConfig().feishu_app_secret == "dotenv-secret"
 
 
+def test_app_config_loads_desktop_data_dir_dotenv(tmp_path: Path, monkeypatch) -> None:
+    from app import config as config_module
+
+    data_dir = tmp_path / "desktop-data"
+    data_dir.mkdir()
+    (data_dir / ".env").write_text(
+        "STOCK_LAB_ZHIPU_API_KEY=desktop-zhipu-secret\n",
+        encoding="utf-8",
+    )
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    monkeypatch.setenv("STOCK_LAB_DATA_DIR", str(data_dir))
+    monkeypatch.delenv("STOCK_LAB_ZHIPU_API_KEY", raising=False)
+
+    config_module.load_project_dotenv(project_root)
+
+    assert config_module.AppConfig().zhipu_api_key == "desktop-zhipu-secret"
+
+
 def test_app_config_masks_feishu_secret(monkeypatch) -> None:
     monkeypatch.delenv("STOCK_LAB_FEISHU_APP_ID", raising=False)
     monkeypatch.setenv("STOCK_LAB_FEISHU_APP_SECRET", "super-secret")
     monkeypatch.setenv("STOCK_LAB_CLIENT_AUTH_SECRET", "client-secret")
+    monkeypatch.setenv("STOCK_LAB_ZHIPU_API_KEY", "zhipu-secret")
 
     config = AppConfig()
 
     assert config.feishu_app_id == ""
     assert config.feishu_app_secret == "super-secret"
     assert config.client_auth_secret == "client-secret"
+    assert config.zhipu_api_key == "zhipu-secret"
     assert config.public_dict()["feishu_app_secret"] == "***"
     assert config.public_dict()["client_auth_secret"] == "***"
+    assert config.public_dict()["zhipu_api_key"] == "***"
+    assert config.public_dict()["ai"] == {
+        "configured": True,
+        "provider": "zhipu",
+        "requested_provider": "auto",
+        "model": "glm-4.7-flash",
+    }
 
 
 def test_frontend_static_path_resolves_spa_and_assets(tmp_path: Path) -> None:
@@ -4692,6 +4720,97 @@ def test_notification_settings_roundtrip(tmp_path: Path) -> None:
     assert not (tmp_path / "settings.json").exists()
 
 
+def test_notification_settings_roundtrip_watchlist_feishu_subscription(tmp_path: Path) -> None:
+    config = AppConfig(data_dir=tmp_path)
+
+    saved = save_notification_settings(
+        config,
+        "trader@example.com",
+        board_exclusion_enabled=True,
+        excluded_boards=["star"],
+        watchlist_commentary_feishu_enabled=True,
+        watchlist_commentary_feishu_chat_id="  oc_abcdefgh12345678  ",
+        watchlist_commentary_platform_url="https://stock.example.com/lab/",
+    )
+
+    assert saved.watchlist_commentary_feishu_enabled is True
+    assert saved.watchlist_commentary_feishu_chat_id == "oc_abcdefgh12345678"
+    assert saved.watchlist_commentary_platform_url == "https://stock.example.com/lab"
+
+    # Older callers that only update board settings must not silently disable the group subscription.
+    save_notification_settings(config, "trader@example.com", excluded_boards=["startup"])
+    loaded = load_notification_settings(config, "trader@example.com")
+    assert loaded.watchlist_commentary_feishu_enabled is True
+    assert loaded.watchlist_commentary_feishu_chat_id == "oc_abcdefgh12345678"
+    assert loaded.watchlist_commentary_platform_url == "https://stock.example.com/lab"
+
+
+def test_notification_settings_accepts_numeric_feishu_group_id(tmp_path: Path) -> None:
+    config = AppConfig(data_dir=tmp_path, watchlist_commentary_feishu_enabled=False)
+
+    saved = save_notification_settings(
+        config,
+        "trader@example.com",
+        watchlist_commentary_feishu_enabled=True,
+        watchlist_commentary_feishu_chat_id="7650000000000000000",
+        watchlist_commentary_platform_url="https://stock.example.com/",
+    )
+
+    assert saved.watchlist_commentary_feishu_chat_id == "7650000000000000000"
+    assert saved.watchlist_commentary_platform_url == "https://stock.example.com"
+
+
+def test_notification_settings_uses_deployment_defaults_until_user_overrides(tmp_path: Path) -> None:
+    config = AppConfig(
+        data_dir=tmp_path,
+        watchlist_commentary_feishu_enabled=True,
+        watchlist_commentary_feishu_chat_id="oc_default12345678",
+        watchlist_commentary_platform_url="https://stock.example.com/",
+    )
+
+    defaults = load_notification_settings(config, "trader@example.com")
+    assert defaults.watchlist_commentary_feishu_enabled is True
+    assert defaults.watchlist_commentary_feishu_chat_id == "oc_default12345678"
+    assert defaults.watchlist_commentary_platform_url == "https://stock.example.com"
+
+    saved = save_notification_settings(
+        config,
+        "trader@example.com",
+        watchlist_commentary_feishu_enabled=False,
+        watchlist_commentary_feishu_chat_id="oc_default12345678",
+        watchlist_commentary_platform_url="https://stock.example.com",
+    )
+    assert saved.watchlist_commentary_feishu_enabled is False
+
+
+@pytest.mark.parametrize(
+    ("chat_id", "platform_url", "message"),
+    [
+        ("not-a-chat", "https://stock.example.com", "oc_"),
+        ("oc_abcdefgh12345678", "javascript:alert(1)", "http"),
+        ("oc_abcdefgh12345678", "", "平台访问地址"),
+    ],
+)
+def test_notification_settings_rejects_invalid_watchlist_feishu_subscription(
+    tmp_path: Path,
+    chat_id: str,
+    platform_url: str,
+    message: str,
+) -> None:
+    config = AppConfig(data_dir=tmp_path)
+
+    with pytest.raises(ValueError, match=message):
+        save_notification_settings(
+            config,
+            "trader@example.com",
+            watchlist_commentary_feishu_enabled=True,
+            watchlist_commentary_feishu_chat_id=chat_id,
+            watchlist_commentary_platform_url=platform_url,
+        )
+
+    assert load_notification_settings(config, "trader@example.com").watchlist_commentary_feishu_enabled is False
+
+
 def test_notification_settings_accepts_any_valid_email_domain(tmp_path: Path) -> None:
     config = AppConfig(data_dir=tmp_path)
 
@@ -4969,6 +5088,50 @@ def test_notification_test_api_accepts_signed_frontend_request(tmp_path: Path, m
 
     assert response.status_code == 200
     assert response.json() == {"ok": True, "message": "测试通知已发送"}
+
+
+def test_watchlist_commentary_notification_test_sends_saved_card(tmp_path: Path, monkeypatch) -> None:
+    from app import main
+
+    config = AppConfig(
+        data_dir=tmp_path,
+        client_auth_secret="client-secret",
+        ai_provider="rules",
+        zhipu_api_key=None,
+        ai_command=None,
+    )
+    save_notification_settings(
+        config,
+        "user@example.com",
+        watchlist_commentary_feishu_enabled=True,
+        watchlist_commentary_feishu_chat_id="oc_abcdefgh12345678",
+        watchlist_commentary_platform_url="https://stock.example.com",
+    )
+    captured: dict[str, object] = {}
+
+    def fake_send(card, chat_id, *, config):
+        captured["card"] = card
+        captured["chat_id"] = chat_id
+        captured["config"] = config
+        return True
+
+    monkeypatch.setattr(main, "CONFIG", config)
+    monkeypatch.setattr(main, "send_feishu_card", fake_send)
+    client = TestClient(main.app)
+    origin = "http://localhost:5173"
+    token = client.get("/api/client-auth", headers={"Origin": origin}).json()["csrf_token"]
+
+    response = client.post(
+        "/api/notification-settings/watchlist-commentary/test",
+        json={"user_email": "user@example.com"},
+        headers={"Origin": origin, "X-Stock-Lab-CSRF": token},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "message": "测试卡片已发送到订阅群（规则兜底）"}
+    assert captured["chat_id"] == "oc_abcdefgh12345678"
+    assert captured["config"] is config
+    assert captured["card"]["schema"] == "2.0"
 
 
 def test_screen_submit_is_always_queued(tmp_path: Path, monkeypatch) -> None:

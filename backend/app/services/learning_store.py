@@ -41,6 +41,17 @@ SCHEMA = [
     """,
     "CREATE INDEX IF NOT EXISTS idx_user_settings_updated_at ON user_settings(updated_at)",
     """
+    CREATE TABLE IF NOT EXISTS watchlist_commentary_subscriptions (
+        user_email TEXT PRIMARY KEY,
+        enabled INTEGER NOT NULL DEFAULT 0,
+        feishu_chat_id TEXT,
+        platform_url TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_watchlist_commentary_subscriptions_updated_at ON watchlist_commentary_subscriptions(updated_at)",
+    """
     CREATE TABLE IF NOT EXISTS strategy_experiments (
         id TEXT PRIMARY KEY,
         status TEXT NOT NULL,
@@ -220,6 +231,64 @@ def save_user_settings(config: AppConfig, payload: dict[str, Any]) -> dict[str, 
             ),
         )
     return get_user_settings(config, user_email)
+
+
+def get_watchlist_commentary_subscription(config: AppConfig, user_email: str) -> dict[str, Any]:
+    ensure_schema(config)
+    with connect(config) as conn:
+        row = execute(
+            conn,
+            "SELECT * FROM watchlist_commentary_subscriptions WHERE user_email = ?",
+            (user_email,),
+        ).fetchone()
+    if not row:
+        return {}
+    return {
+        "user_email": str(row_value(row, "user_email")),
+        "enabled": bool(row_value(row, "enabled")),
+        "feishu_chat_id": row_value(row, "feishu_chat_id") or None,
+        "platform_url": row_value(row, "platform_url") or None,
+        "created_at": str(row_value(row, "created_at") or ""),
+        "updated_at": str(row_value(row, "updated_at") or ""),
+    }
+
+
+def save_watchlist_commentary_subscription(
+    config: AppConfig,
+    user_email: str,
+    *,
+    enabled: bool,
+    feishu_chat_id: str | None,
+    platform_url: str | None,
+) -> dict[str, Any]:
+    ensure_schema(config)
+    now = timestamp()
+    existing = get_watchlist_commentary_subscription(config, user_email)
+    created_at = existing.get("created_at") if existing else now
+    with connect(config) as conn:
+        execute(
+            conn,
+            """
+            INSERT INTO watchlist_commentary_subscriptions (
+                user_email, enabled, feishu_chat_id, platform_url, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_email) DO UPDATE SET
+                enabled = excluded.enabled,
+                feishu_chat_id = excluded.feishu_chat_id,
+                platform_url = excluded.platform_url,
+                updated_at = excluded.updated_at
+            """,
+            (
+                user_email,
+                1 if enabled else 0,
+                feishu_chat_id,
+                platform_url,
+                created_at,
+                now,
+            ),
+        )
+    return get_watchlist_commentary_subscription(config, user_email)
 
 
 def save_strategy_experiment(config: AppConfig, payload: dict[str, Any]) -> dict[str, Any]:

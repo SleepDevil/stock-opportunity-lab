@@ -147,6 +147,70 @@ class MarketIndexResponse(BaseModel):
     points: list[MarketIndexPoint] = Field(default_factory=list)
 
 
+class WatchlistCommentaryQuote(BaseModel):
+    code: str = Field(pattern=r"^\d{6}$")
+    name: str = Field(min_length=1, max_length=40)
+    price: float | None = None
+    pct_change: float | None = None
+    change: float | None = None
+    amount: float | None = None
+    turnover: float | None = None
+    high: float | None = None
+    low: float | None = None
+    open: float | None = None
+    previous_close: float | None = None
+    updated_at: str | None = Field(default=None, max_length=64)
+
+
+class WatchlistCommentaryMarket(BaseModel):
+    code: str = Field(default="000001", pattern=r"^\d{6}$")
+    name: str = Field(default="上证指数", min_length=1, max_length=40)
+    price: float | None = None
+    pct_change: float | None = None
+    change: float | None = None
+    amount: float | None = None
+    updated_at: str | None = Field(default=None, max_length=64)
+
+
+class WatchlistCommentaryRequest(BaseModel):
+    slot: str = Field(min_length=1, max_length=40)
+    captured_at: str = Field(min_length=1, max_length=64)
+    user_email: str | None = Field(default=None, max_length=254)
+    session: Literal["preopen", "trading", "break", "closed"] = "trading"
+    is_stale: bool = False
+    quotes: list[WatchlistCommentaryQuote] = Field(min_length=1, max_length=8)
+    market: WatchlistCommentaryMarket | None = None
+
+
+class WatchlistCommentaryStock(BaseModel):
+    code: str
+    name: str
+    price: float | None = None
+    pct_change: float | None = None
+
+
+class WatchlistCommentaryDelivery(BaseModel):
+    status: Literal["sent", "disabled", "unconfigured", "outside_session", "failed"] = "disabled"
+    message: str = "飞书群订阅未开启"
+
+
+class WatchlistCommentaryResponse(BaseModel):
+    trade_date: str
+    slot: str
+    generated_at: str
+    source_updated_at: str | None = None
+    mode: Literal["external_ai", "rules_fallback"]
+    provider: Literal["zhipu", "external_command", "rules_fallback"] = "rules_fallback"
+    model: str | None = Field(default=None, max_length=128)
+    title: str
+    commentary: str
+    stocks: list[WatchlistCommentaryStock] = Field(default_factory=list)
+    summary: dict[str, Any]
+    note: str | None = None
+    disclaimer: str
+    delivery: WatchlistCommentaryDelivery = Field(default_factory=WatchlistCommentaryDelivery)
+
+
 class IntradayAlertsRequest(BaseModel):
     screen_date: str
     trade_date: str | None = None
@@ -176,12 +240,18 @@ class NotificationSettings(BaseModel):
     user_email: str | None = Field(default=None, max_length=254)
     board_exclusion_enabled: bool = False
     excluded_boards: list[str] = Field(default_factory=list)
+    watchlist_commentary_feishu_enabled: bool = False
+    watchlist_commentary_feishu_chat_id: str | None = Field(default=None, max_length=128)
+    watchlist_commentary_platform_url: str | None = Field(default=None, max_length=512)
 
 
 class NotificationSettingsUpdate(BaseModel):
     user_email: str | None = Field(default=None, max_length=254)
     board_exclusion_enabled: bool = False
     excluded_boards: list[str] = Field(default_factory=list)
+    watchlist_commentary_feishu_enabled: bool | None = None
+    watchlist_commentary_feishu_chat_id: str | None = Field(default=None, max_length=128)
+    watchlist_commentary_platform_url: str | None = Field(default=None, max_length=512)
 
 
 class ScreenResponse(BaseModel):

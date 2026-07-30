@@ -63,6 +63,12 @@ const now = () => new Date().toISOString();
 
 const config: AppConfig = {
   data_dir: 'static-github-pages',
+  ai: {
+    configured: false,
+    provider: 'rules_fallback',
+    requested_provider: 'rules',
+    model: null
+  },
   screen: {
     ...screenConfig,
     mode: 'static-mirror',
@@ -219,7 +225,10 @@ function notificationSettings(): NotificationSettings {
   return {
     user_email: null,
     board_exclusion_enabled: true,
-    excluded_boards: ['startup', 'star', 'bse']
+    excluded_boards: ['startup', 'star', 'bse'],
+    watchlist_commentary_feishu_enabled: false,
+    watchlist_commentary_feishu_chat_id: null,
+    watchlist_commentary_platform_url: null
   };
 }
 

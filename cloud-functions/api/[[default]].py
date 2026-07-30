@@ -134,6 +134,12 @@ def public_config() -> dict[str, object]:
         "feishu_app_id": os.getenv("STOCK_LAB_FEISHU_APP_ID", ""),
         "feishu_app_secret": "***" if os.getenv("STOCK_LAB_FEISHU_APP_SECRET") else None,
         "client_auth_secret": "***",
+        "ai": {
+            "configured": False,
+            "provider": "rules_fallback",
+            "requested_provider": "rules",
+            "model": None,
+        },
         "screen": asdict(SCREEN),
         "strategy": asdict(STRATEGY),
     }
