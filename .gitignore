@@ -1,7 +1,11 @@
 .DS_Store
 .env
 .env.*
-.internal/
+.internal/*
+!.internal/bytefaas/
+.internal/bytefaas/*
+!.internal/bytefaas/scm_build.sh
+!.internal/bytefaas/start.sh
 artifacts/
 docs/assets/product-manual/settings.png
 frontend/public/downloads/
