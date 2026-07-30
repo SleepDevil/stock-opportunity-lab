@@ -29,6 +29,9 @@ WATCHLIST_SYSTEM_PROMPT = """
 """.strip()
 
 RATE_LIMIT_RETRY_DELAYS = (2.0, 5.0)
+RATE_LIMIT_FALLBACK_MODELS = {
+    "glm-4.7-flash": ("glm-4-flash-250414",),
+}
 
 
 class ZhipuAIError(RuntimeError):
@@ -75,12 +78,25 @@ def generate_zhipu_watchlist_commentary(
         "max_tokens": 512,
         "stream": False,
     }
-    response = post_zhipu_json(
-        chat_completions_url(config.zhipu_base_url),
-        request_payload,
-        api_key=api_key,
-        timeout=config.ai_timeout_seconds,
-    )
+    response: dict[str, Any] | None = None
+    model_candidates = (model, *RATE_LIMIT_FALLBACK_MODELS.get(model, ()))
+    for candidate in model_candidates:
+        request_payload["model"] = candidate
+        try:
+            response = post_zhipu_json(
+                chat_completions_url(config.zhipu_base_url),
+                request_payload,
+                api_key=api_key,
+                timeout=config.ai_timeout_seconds,
+            )
+            model = candidate
+            break
+        except ZhipuAIError as exc:
+            is_last_candidate = candidate == model_candidates[-1]
+            if "触发限流" not in str(exc) or is_last_candidate:
+                raise
+    if response is None:
+        raise ZhipuAIError("智谱接口没有返回可用结果")
     content = response_content(response)
     generated = parse_generated_json(content)
     title = normalize_title(generated.get("title")) or normalize_title(fallback_title)

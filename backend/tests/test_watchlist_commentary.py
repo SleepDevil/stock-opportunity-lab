@@ -229,6 +229,48 @@ def test_zhipu_rate_limit_retries_before_succeeding(monkeypatch) -> None:
     assert delays == [2.0, 5.0]
 
 
+def test_zhipu_rate_limit_falls_back_to_another_free_model(monkeypatch) -> None:
+    attempted_models: list[str] = []
+
+    def fake_post(_url, payload, **_kwargs):
+        attempted_models.append(payload["model"])
+        if payload["model"] == "glm-4.7-flash":
+            raise ZhipuAIError("智谱 API 当前触发限流")
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "title": "免费模型接棒，行情继续播",
+                                "commentary": "德赛西威和德明利一红一绿，备用模型顺利接过话筒，把真实行情快照讲清楚。",
+                            },
+                            ensure_ascii=False,
+                        )
+                    }
+                }
+            ]
+        }
+
+    monkeypatch.setattr(zhipu_ai, "post_zhipu_json", fake_post)
+    config = AppConfig(
+        database_url=None,
+        ai_provider="zhipu",
+        zhipu_api_key="zhipu-test-secret",
+        zhipu_model="glm-4.7-flash",
+    )
+
+    generated = zhipu_ai.generate_zhipu_watchlist_commentary(
+        config,
+        {"watchlist_quotes": sample_request()["quotes"]},
+        fallback_title="规则标题",
+    )
+
+    assert attempted_models == ["glm-4.7-flash", "glm-4-flash-250414"]
+    assert generated.model == "glm-4-flash-250414"
+    assert generated.title == "免费模型接棒，行情继续播"
+
+
 def test_zhipu_failure_can_fall_through_to_legacy_command(monkeypatch) -> None:
     monkeypatch.setenv("STOCK_LAB_AI_COMMAND", "legacy-ai")
     monkeypatch.setattr(
