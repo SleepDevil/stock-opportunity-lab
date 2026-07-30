@@ -64,7 +64,7 @@ def metric_color(value: Any) -> str:
     number = optional_number(value)
     if number is None or number == 0:
         return "grey"
-    return "green" if number > 0 else "red"
+    return "red" if number > 0 else "green"
 
 
 def card_time(value: str | None) -> str:

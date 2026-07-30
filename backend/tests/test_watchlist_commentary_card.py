@@ -46,6 +46,23 @@ def test_card_uses_card_2_schema_and_links_every_stock() -> None:
     assert "不构成投资建议" in serialized
 
 
+def test_card_uses_a_share_price_colors() -> None:
+    result = sample_result()
+    stocks = result["stocks"]
+    assert isinstance(stocks, list)
+    stocks.append({"code": "000001", "name": "平盘示例", "pct_change": 0})
+
+    card = build_watchlist_commentary_card(result, "https://stock.example.com")
+    average_metric = card["body"]["elements"][0]["columns"][0]
+    details = card["body"]["elements"][2]["content"]
+
+    assert average_metric["background_style"] == "red-50"
+    assert "<font color='red'>+0.34%</font>" in average_metric["elements"][0]["content"]
+    assert "<font color='red'>**+1.97%**</font>" in details
+    assert "<font color='green'>**-1.29%**</font>" in details
+    assert "<font color='grey'>**+0.00%**</font>" in details
+
+
 def test_manual_card_is_clearly_labeled_as_latest_snapshot() -> None:
     result = sample_result()
     result["trigger"] = "manual"
