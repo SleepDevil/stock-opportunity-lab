@@ -331,6 +331,7 @@ def generate_watchlist_commentary(
     return {
         "trade_date": captured_at.strftime("%Y%m%d"),
         "slot": str(request.get("slot") or "manual"),
+        "trigger": "manual" if bool(request.get("manual")) else "scheduled",
         "generated_at": datetime.now(SHANGHAI_TZ).isoformat(timespec="seconds"),
         "source_updated_at": latest_source_time(quotes, market),
         "mode": mode,

@@ -46,6 +46,18 @@ def test_card_uses_card_2_schema_and_links_every_stock() -> None:
     assert "不构成投资建议" in serialized
 
 
+def test_manual_card_is_clearly_labeled_as_latest_snapshot() -> None:
+    result = sample_result()
+    result["trigger"] = "manual"
+
+    card = build_watchlist_commentary_card(result, "https://stock.example.com")
+    serialized = json.dumps(card, ensure_ascii=False)
+
+    assert "手动触发" in card["header"]["subtitle"]["content"]
+    assert "最新可用行情快照" in card["header"]["subtitle"]["content"]
+    assert serialized.count("手动触发") >= 2
+
+
 def test_linkifier_escapes_untrusted_markdown_and_keeps_stock_links() -> None:
     result = linkify_stock_names(
         "**先别加粗**，德赛西威(测试)仍只看快照。",

@@ -1,4 +1,12 @@
-import type { Candidate, ScreenResponse, StockIntradayPoint } from '../../types/api';
+import type {
+  Candidate,
+  MarketIndexResponse,
+  ScreenResponse,
+  StockIntradayPoint,
+  StockQuote,
+  StockQuotesResponse,
+  WatchlistCommentaryRequest
+} from '../../types/api';
 
 export type DesktopWidgetSummary = {
   candidateCount: number;
@@ -237,6 +245,70 @@ export function desktopMarketSession(now: Date): DesktopMarketSession {
   ) return 'trading';
   if (minutes > 11 * 60 + 30 && minutes < 13 * 60) return 'break';
   return 'closed';
+}
+
+function commentaryQuoteChangePct(quote?: StockQuote): number | null {
+  if (quote?.pct_change != null && Number.isFinite(quote.pct_change)) return quote.pct_change;
+  if (quote?.price != null && quote.previous_close != null && quote.previous_close > 0) {
+    return ((quote.price - quote.previous_close) / quote.previous_close) * 100;
+  }
+  return null;
+}
+
+export function buildDesktopWatchlistCommentaryRequest(input: {
+  watchlist: DesktopWatchStock[];
+  quotes: StockQuotesResponse;
+  market?: MarketIndexResponse | null;
+  userEmail?: string;
+  slot?: string;
+  manual?: boolean;
+  now?: Date;
+}): WatchlistCommentaryRequest {
+  const now = input.now ?? new Date();
+  const watchlist = normalizeDesktopWatchlist(input.watchlist);
+  if (!watchlist.length) {
+    throw new Error('请先在行情悬浮窗添加自选股');
+  }
+  if (!input.quotes.quotes.length) {
+    throw new Error('暂时没有可用的自选行情，请稍后重试');
+  }
+  const quoteByCode = new Map(input.quotes.quotes.map((quote) => [quote.code, quote]));
+  const manual = Boolean(input.manual);
+  const market = input.market ?? null;
+  return {
+    slot: input.slot ?? `${desktopShanghaiDateKey(now)}-${manual ? `manual-${now.getTime()}` : 'scheduled'}`,
+    captured_at: now.toISOString(),
+    user_email: input.userEmail?.trim().toLowerCase() || undefined,
+    session: desktopMarketSession(now),
+    manual,
+    is_stale: Boolean(input.quotes.is_stale || market?.is_stale),
+    quotes: watchlist.map((stock) => {
+      const quote = quoteByCode.get(stock.code);
+      return {
+        code: stock.code,
+        name: quote?.name || stock.name,
+        price: quote?.price,
+        pct_change: commentaryQuoteChangePct(quote),
+        change: quote?.change,
+        amount: quote?.amount,
+        turnover: quote?.turnover,
+        high: quote?.high,
+        low: quote?.low,
+        open: quote?.open,
+        previous_close: quote?.previous_close,
+        updated_at: quote?.updated_at || input.quotes.updated_at
+      };
+    }),
+    market: market ? {
+      code: market.code,
+      name: market.name,
+      price: market.price,
+      pct_change: commentaryQuoteChangePct(market),
+      change: market.change,
+      amount: market.amount,
+      updated_at: market.updated_at
+    } : null
+  };
 }
 
 export function desktopQuoteRefreshInterval(now: Date): number | false {

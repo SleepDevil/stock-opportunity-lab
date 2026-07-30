@@ -254,6 +254,7 @@ def test_watchlist_commentary_api_validates_and_returns_response() -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["slot"] == "20260730-1030"
+    assert body["trigger"] == "scheduled"
     assert body["summary"]["rising"] == 1
     assert body["delivery"]["status"] == "unconfigured"
     assert "不构成投资建议" in body["disclaimer"]
@@ -336,3 +337,41 @@ def test_watchlist_commentary_does_not_send_outside_trading_session(tmp_path, mo
 
     assert response.status_code == 200
     assert response.json()["delivery"]["status"] == "outside_session"
+
+
+def test_manual_watchlist_commentary_sends_latest_snapshot_outside_trading_session(tmp_path, monkeypatch) -> None:
+    config = AppConfig(data_dir=tmp_path, database_url=None, client_auth_secret="client-secret")
+    save_notification_settings(
+        config,
+        "trader@example.com",
+        watchlist_commentary_feishu_enabled=True,
+        watchlist_commentary_feishu_chat_id="oc_abcdefgh12345678",
+        watchlist_commentary_platform_url="https://stock.example.com",
+    )
+    sent: dict[str, object] = {}
+
+    def fake_send(card, chat_id, *, config):
+        sent["card"] = card
+        sent["chat_id"] = chat_id
+        sent["config"] = config
+        return True
+
+    monkeypatch.setattr(main, "CONFIG", config)
+    monkeypatch.setattr(main, "send_feishu_card", fake_send)
+    request = sample_request()
+    request.update({
+        "user_email": "trader@example.com",
+        "session": "closed",
+        "manual": True,
+    })
+
+    response = signed_post(TestClient(main.app), "/api/watchlist-commentary", request)
+
+    assert response.status_code == 200
+    assert response.json()["trigger"] == "manual"
+    assert response.json()["delivery"] == {
+        "status": "sent",
+        "message": "手动锐评已发送到订阅群",
+    }
+    assert sent["chat_id"] == "oc_abcdefgh12345678"
+    assert "手动触发" in str(sent["card"])

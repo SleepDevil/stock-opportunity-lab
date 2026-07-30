@@ -110,6 +110,8 @@ def build_watchlist_commentary_card(result: dict[str, Any], platform_url: str) -
     title = str(result.get("title") or "今日自选走势锐评")
     generated_at = card_time(str(result.get("generated_at") or ""))
     source_updated_at = card_time(result.get("source_updated_at"))
+    manual = str(result.get("trigger") or "scheduled") == "manual"
+    trigger_label = "手动触发" if manual else "定时巡场"
     commentary = linkify_stock_names(str(result.get("commentary") or ""), stocks, platform_url)
     footer = (
         f"行情快照 {escape_lark_markdown(source_updated_at)} · "
@@ -122,7 +124,7 @@ def build_watchlist_commentary_card(result: dict[str, Any], platform_url: str) -
             "update_multi": True,
             "width_mode": "default",
             "enable_forward": True,
-            "summary": {"content": f"今日自选走势锐评 · {generated_at}"},
+            "summary": {"content": f"今日自选走势锐评 · {trigger_label} · {generated_at}"},
             "style": {
                 "text_size": {
                     "body": {"default": "normal", "pc": "normal", "mobile": "normal"},
@@ -132,7 +134,10 @@ def build_watchlist_commentary_card(result: dict[str, Any], platform_url: str) -
         },
         "header": {
             "title": {"tag": "plain_text", "content": "今日自选走势锐评"},
-            "subtitle": {"tag": "plain_text", "content": f"{generated_at} · 自选行情快照"},
+            "subtitle": {
+                "tag": "plain_text",
+                "content": f"{trigger_label} · {generated_at} · 最新可用行情快照",
+            },
             "template": "green",
             "icon": {"tag": "standard_icon", "token": "chart_colorful"},
             "text_tag_list": [
@@ -140,7 +145,12 @@ def build_watchlist_commentary_card(result: dict[str, Any], platform_url: str) -
                     "tag": "text_tag",
                     "text": {"tag": "plain_text", "content": mode_label},
                     "color": mode_color,
-                }
+                },
+                {
+                    "tag": "text_tag",
+                    "text": {"tag": "plain_text", "content": trigger_label},
+                    "color": "turquoise" if manual else "green",
+                },
             ],
         },
         "body": {

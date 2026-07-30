@@ -187,6 +187,44 @@ test('schedules one commentary per half-hour trading slot and pauses for lunch',
   assert.equal(model.desktopCommentarySlot(shanghaiDate(12, 10, 0)), null);
 });
 
+test('builds a manual commentary request from the latest real quote snapshot', () => {
+  const request = model.buildDesktopWatchlistCommentaryRequest({
+    watchlist: [
+      { code: '002920', name: '德赛西威' },
+      { code: '001309', name: '德明利' }
+    ],
+    quotes: {
+      trade_date: '20260730',
+      updated_at: '2026-07-30T15:01:00+08:00',
+      source: 'live-provider',
+      is_stale: false,
+      quotes: [
+        { code: '002920', name: '德赛西威', price: 88.94, pct_change: 3.6 },
+        { code: '001309', name: '德明利', price: 366.5, previous_close: 350 }
+      ]
+    },
+    market: {
+      code: '000001',
+      name: '上证指数',
+      updated_at: '2026-07-30T15:01:00+08:00',
+      source: 'live-provider',
+      is_stale: false,
+      price: 3806.79,
+      pct_change: 0.57,
+      points: []
+    },
+    userEmail: 'Trader@Example.com',
+    manual: true,
+    now: new Date('2026-07-30T16:05:00+08:00')
+  });
+
+  assert.equal(request.manual, true);
+  assert.equal(request.session, 'closed');
+  assert.equal(request.user_email, 'trader@example.com');
+  assert.match(request.slot, /^20260730-manual-/);
+  assert.deepEqual(request.quotes.map((quote) => quote.pct_change), [3.6, (366.5 - 350) / 350 * 100]);
+});
+
 test('recognizes whether an exchange quote belongs to the current Shanghai trade date', () => {
   const now = new Date('2026-07-14T10:00:00+08:00');
   assert.equal(model.desktopTimestampMatchesShanghaiDate('2026-07-14T09:59:58+08:00', now), true);

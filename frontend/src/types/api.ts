@@ -1187,6 +1187,7 @@ export type WatchlistCommentaryRequest = {
   captured_at: string;
   user_email?: string | null;
   session: 'preopen' | 'trading' | 'break' | 'closed';
+  manual?: boolean;
   is_stale?: boolean;
   quotes: WatchlistCommentaryQuote[];
   market?: {
@@ -1209,6 +1210,7 @@ export type WatchlistCommentaryMover = {
 export type WatchlistCommentaryResponse = {
   trade_date: string;
   slot: string;
+  trigger: 'scheduled' | 'manual';
   generated_at: string;
   source_updated_at?: string | null;
   mode: 'external_ai' | 'rules_fallback';

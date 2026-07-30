@@ -69,6 +69,7 @@ import type {
 import {
   addDesktopWatchStock,
   buildDesktopIntradaySparkline,
+  buildDesktopWatchlistCommentaryRequest,
   buildDesktopWidgetQuoteSlots,
   buildDesktopWidgetSummary,
   DESKTOP_WATCHLIST_LIMIT,
@@ -258,40 +259,30 @@ export function DesktopWidgetPage() {
   ));
 
   const commentaryMutation = useMutation({
-    mutationFn: ({ slotKey }: { slotKey: string; requestKey: string; watchlistKey: string }) => {
-      const request: WatchlistCommentaryRequest = {
+    mutationFn: async ({
+      slotKey,
+      manual
+    }: {
+      slotKey: string;
+      requestKey: string;
+      watchlistKey: string;
+      manual: boolean;
+    }) => {
+      let quoteSnapshot = quotesQuery.data;
+      let marketSnapshot = marketIndex;
+      if (manual) {
+        quoteSnapshot = await fetchStockQuotes({ symbols: watchedSymbols, refresh: true });
+        marketSnapshot = await fetchMarketIndex({ refresh: true });
+      }
+      if (!quoteSnapshot) throw new Error('暂时没有可用的自选行情，请稍后重试');
+      const request: WatchlistCommentaryRequest = buildDesktopWatchlistCommentaryRequest({
+        watchlist,
+        quotes: quoteSnapshot,
+        market: marketSnapshot,
+        userEmail: readStoredUserEmail(),
         slot: slotKey,
-        captured_at: new Date().toISOString(),
-        user_email: readStoredUserEmail(),
-        session: desktopMarketSession(new Date()),
-        is_stale: Boolean(quotesQuery.data?.is_stale || marketIndex?.is_stale),
-        quotes: watchlist.map((stock) => {
-          const quote = quoteByCode.get(stock.code);
-          return {
-            code: stock.code,
-            name: quote?.name || stock.name,
-            price: quote?.price,
-            pct_change: quoteChangePct(quote),
-            change: quote?.change,
-            amount: quote?.amount,
-            turnover: quote?.turnover,
-            high: quote?.high,
-            low: quote?.low,
-            open: quote?.open,
-            previous_close: quote?.previous_close,
-            updated_at: quote?.updated_at || quotesQuery.data?.updated_at
-          };
-        }),
-        market: marketIndex ? {
-          code: marketIndex.code,
-          name: marketIndex.name,
-          price: marketIndex.price,
-          pct_change: quoteChangePct(marketIndex),
-          change: marketIndex.change,
-          amount: marketIndex.amount,
-          updated_at: marketIndex.updated_at
-        } : null
-      };
+        manual
+      });
       return fetchWatchlistCommentary(request);
     },
     onSuccess: (response, variables) => {
@@ -308,12 +299,13 @@ export function DesktopWidgetPage() {
     : undefined;
 
   const requestCommentary = (manual = false) => {
-    if (!watchlist.length || !quotesQuery.data?.quotes.length || commentaryMutation.isPending) return;
+    if (!watchlist.length || commentaryMutation.isPending) return;
+    if (!manual && !quotesQuery.data?.quotes.length) return;
     const slotKey = commentarySlot?.key ?? `${shanghaiDateKey}-manual`;
     const requestKey = desktopCommentaryRequestKey(slotKey, watchlist);
     if (!manual && (commentaryCache?.requestKey === requestKey || attemptedCommentaryKey.current === requestKey)) return;
     attemptedCommentaryKey.current = requestKey;
-    commentaryMutation.mutate({ slotKey, requestKey, watchlistKey: commentaryWatchlistKey });
+    commentaryMutation.mutate({ slotKey, requestKey, watchlistKey: commentaryWatchlistKey, manual });
   };
 
   const trimmedStockSearch = stockSearchText.trim();
@@ -390,7 +382,8 @@ export function DesktopWidgetPage() {
     commentaryMutation.mutate({
       slotKey: commentarySlot?.key ?? scheduledCommentaryKey,
       requestKey: scheduledCommentaryKey,
-      watchlistKey: commentaryWatchlistKey
+      watchlistKey: commentaryWatchlistKey,
+      manual: false
     });
   }, [
     commentaryCache?.requestKey,
@@ -612,11 +605,11 @@ export function DesktopWidgetPage() {
               {pinned ? <Pin size={16} /> : <PinOff size={16} />}
             </ActionIcon>
           </Tooltip>
-          <Tooltip label={view === 'watchlist' ? '刷新行情' : view === 'commentary' ? '重新锐评' : '刷新报告'}>
+          <Tooltip label={view === 'watchlist' ? '刷新行情' : view === 'commentary' ? '立即用真实行情锐评并推送' : '刷新报告'}>
             <ActionIcon
               variant="subtle"
               color="dark"
-              aria-label={view === 'watchlist' ? '刷新行情' : view === 'commentary' ? '重新锐评' : '刷新报告'}
+              aria-label={view === 'watchlist' ? '刷新行情' : view === 'commentary' ? '立即用真实行情锐评并推送' : '刷新报告'}
               loading={refreshing}
               onClick={refresh}
             >
@@ -823,9 +816,9 @@ function WatchlistCommentaryPanel({
         <span>
           {waitingForQuotes
             ? '行情到达后会自动生成首条锐评。'
-            : '连续竞价期间每 30 分钟自动生成一次，也可以现在手动看看。'}
+            : '连续竞价期间每 30 分钟自动生成一次；手动触发会刷新真实行情并立即推送。'}
         </span>
-        {!waitingForQuotes ? <button type="button" onClick={onGenerate}><Sparkles size={15} />现在锐评</button> : null}
+        {!waitingForQuotes ? <button type="button" onClick={onGenerate}><Send size={15} />立即锐评并推送</button> : null}
       </div>
     );
   }
@@ -873,7 +866,7 @@ function WatchlistCommentaryPanel({
         </p>
         <footer>
           <span>{scheduleText}</span>
-          <button type="button" disabled={loading} onClick={onGenerate}><RefreshCw size={12} />重评</button>
+          <button type="button" disabled={loading} onClick={onGenerate}><Send size={12} />立即重评并推送</button>
         </footer>
       </article>
 

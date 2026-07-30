@@ -7,12 +7,16 @@ import { Bot, Link2, Mail, MessageSquareText, Send, Settings2 } from 'lucide-rea
 
 import { ConfigPanel } from '../../components/ConfigPanel';
 import {
+  fetchMarketIndex,
   fetchNotificationSettings,
+  fetchStockQuotes,
+  fetchWatchlistCommentary,
   saveNotificationSettings,
-  sendTestNotification,
-  sendTestWatchlistCommentaryNotification
+  sendTestNotification
 } from '../../lib/api';
 import type { AppConfig, NotificationSettings } from '../../types/api';
+import { readDesktopWatchlist } from '../desktop/desktopWatchlist';
+import { buildDesktopWatchlistCommentaryRequest } from '../desktop/desktopWidgetModel';
 import {
   boardOptions,
   defaultScreenPreferences,
@@ -93,20 +97,37 @@ export function SettingsPage({
       });
     }
   });
-  const testWatchlistNotificationMutation = useMutation({
-    mutationFn: sendTestWatchlistCommentaryNotification,
+  const manualWatchlistNotificationMutation = useMutation({
+    mutationFn: async (email: string) => {
+      const watchlist = readDesktopWatchlist();
+      if (!watchlist.length) throw new Error('请先在行情悬浮窗添加自选股');
+      const quotes = await fetchStockQuotes({
+        symbols: watchlist.map((stock) => stock.code),
+        refresh: true
+      });
+      const market = await fetchMarketIndex({ refresh: true });
+      const result = await fetchWatchlistCommentary(buildDesktopWatchlistCommentaryRequest({
+        watchlist,
+        quotes,
+        market,
+        userEmail: email,
+        manual: true
+      }));
+      if (result.delivery.status !== 'sent') throw new Error(result.delivery.message);
+      return result;
+    },
     onSuccess: (result) => {
       notifications.show({
-        color: result.ok ? 'teal' : 'orange',
-        title: result.ok ? '测试卡片已发送' : '测试卡片未发送',
-        message: result.message
+        color: 'teal',
+        title: '真实自选锐评已发送',
+        message: `${result.title} · ${result.delivery.message}`
       });
     },
     onError: (error) => {
       notifications.show({
         color: 'red',
-        title: '测试卡片发送失败',
-        message: error instanceof Error ? error.message : '飞书卡片接口返回异常'
+        title: '真实锐评发送失败',
+        message: error instanceof Error ? error.message : '请检查自选行情、订阅配置与机器人权限'
       });
     }
   });
@@ -117,6 +138,7 @@ export function SettingsPage({
   const aiModelLabel = config?.ai?.model || (config?.ai?.provider === 'external_command' ? '外部 AI' : '智谱 GLM');
   const savedWatchlistConfigMatches = Boolean(
     notificationQuery.data?.user_email === effectiveNotificationEmail
+    && Boolean(notificationQuery.data.watchlist_commentary_feishu_enabled) === watchlistFeishuEnabled
     && (notificationQuery.data.watchlist_commentary_feishu_chat_id ?? '') === watchlistFeishuChatId.trim()
     && (notificationQuery.data.watchlist_commentary_platform_url ?? '') === watchlistPlatformUrl.trim()
   );
@@ -305,7 +327,7 @@ export function SettingsPage({
         <div className="watchlist-feishu-switch-row">
           <Switch
             label="开启自选锐评飞书群推送"
-            description="只在 A 股连续交易时段生成锐评后发送；午休和收盘后不推送。"
+            description="自动任务只在 A 股连续交易时段推送；手动触发可随时发送最新可用行情快照。"
             checked={watchlistFeishuEnabled}
             onChange={(event) => setWatchlistFeishuEnabled(event.currentTarget.checked)}
           />
@@ -339,7 +361,7 @@ export function SettingsPage({
 
         <Group justify="space-between" align="flex-end" mt="md" gap="md">
           <Text size="xs" c="dimmed" className="watchlist-feishu-permission-note">
-            机器人需已加入目标群，并具备 im:message 发送消息权限；修改配置后请先保存，再发送测试卡片。
+            机器人需已加入目标群，并具备 im:message 发送消息权限；修改配置后请先保存，再用当前自选真实行情立即推送。
           </Text>
           <Group gap="xs" wrap="nowrap">
             <Button
@@ -355,11 +377,11 @@ export function SettingsPage({
               color="teal"
               variant="light"
               leftSection={<Send size={16} />}
-              loading={testWatchlistNotificationMutation.isPending}
-              disabled={!effectiveNotificationEmail || !watchlistFeishuChatId.trim() || !watchlistPlatformUrl.trim() || !savedWatchlistConfigMatches}
-              onClick={() => testWatchlistNotificationMutation.mutate(effectiveNotificationEmail)}
+              loading={manualWatchlistNotificationMutation.isPending}
+              disabled={!watchlistFeishuEnabled || !effectiveNotificationEmail || !watchlistFeishuChatId.trim() || !watchlistPlatformUrl.trim() || !savedWatchlistConfigMatches}
+              onClick={() => manualWatchlistNotificationMutation.mutate(effectiveNotificationEmail)}
             >
-              测试模型与卡片
+              立即推送真实锐评
             </Button>
           </Group>
         </Group>

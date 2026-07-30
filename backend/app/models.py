@@ -177,6 +177,7 @@ class WatchlistCommentaryRequest(BaseModel):
     captured_at: str = Field(min_length=1, max_length=64)
     user_email: str | None = Field(default=None, max_length=254)
     session: Literal["preopen", "trading", "break", "closed"] = "trading"
+    manual: bool = False
     is_stale: bool = False
     quotes: list[WatchlistCommentaryQuote] = Field(min_length=1, max_length=8)
     market: WatchlistCommentaryMarket | None = None
@@ -197,6 +198,7 @@ class WatchlistCommentaryDelivery(BaseModel):
 class WatchlistCommentaryResponse(BaseModel):
     trade_date: str
     slot: str
+    trigger: Literal["scheduled", "manual"] = "scheduled"
     generated_at: str
     source_updated_at: str | None = None
     mode: Literal["external_ai", "rules_fallback"]

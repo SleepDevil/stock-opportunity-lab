@@ -656,7 +656,7 @@ def deliver_watchlist_commentary(
     result: dict[str, object],
     request: WatchlistCommentaryRequest,
 ) -> dict[str, str]:
-    if request.session != "trading":
+    if request.session != "trading" and not request.manual:
         return {"status": "outside_session", "message": "非连续交易时段，本次锐评未推送到群聊"}
     if not request.user_email:
         return {"status": "unconfigured", "message": "未登录通知账户，本次锐评仅在悬浮窗展示"}
@@ -668,7 +668,8 @@ def deliver_watchlist_commentary(
     card = build_watchlist_commentary_card(result, settings.watchlist_commentary_platform_url)
     sent = send_feishu_card(card, settings.watchlist_commentary_feishu_chat_id, config=CONFIG)
     if sent:
-        return {"status": "sent", "message": "飞书卡片已发送到订阅群"}
+        message = "手动锐评已发送到订阅群" if request.manual else "飞书卡片已发送到订阅群"
+        return {"status": "sent", "message": message}
     return {"status": "failed", "message": "飞书卡片发送失败，请检查机器人权限、群 ID 与应用凭证"}
 
 
