@@ -394,12 +394,12 @@ export function StockAnalysisPage() {
                       saveDesktopWatchStock({ code: analysis.code, name: analysis.name });
                       notifications.show({
                         color: 'teal',
-                        title: '已加入悬浮窗',
-                        message: `${analysis.name}会出现在桌面悬浮窗的自选行情中。`
+                        title: '已加入自选',
+                        message: `${analysis.name}会用于 Web 自选锐评，也会同步到桌面行情自选。`
                       });
                     }}
                   >
-                    加入悬浮窗
+                    加入自选
                   </Button>
                   <Badge color={alertTone(analysis.recommendation.tone)} variant="light">{analysis.recommendation.action}</Badge>
                 </Group>

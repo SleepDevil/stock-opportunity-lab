@@ -7,16 +7,20 @@ import { Bot, Link2, Mail, MessageSquareText, Send, Settings2 } from 'lucide-rea
 
 import { ConfigPanel } from '../../components/ConfigPanel';
 import {
-  fetchMarketIndex,
   fetchNotificationSettings,
-  fetchStockQuotes,
-  fetchWatchlistCommentary,
   saveNotificationSettings,
   sendTestNotification
 } from '../../lib/api';
+import { isDesktopRuntime } from '../../lib/runtime';
 import type { AppConfig, NotificationSettings } from '../../types/api';
-import { readDesktopWatchlist } from '../desktop/desktopWatchlist';
-import { buildDesktopWatchlistCommentaryRequest } from '../desktop/desktopWidgetModel';
+import {
+  readDesktopWatchlist,
+  subscribeDesktopWatchlist,
+  writeDesktopWatchlist
+} from '../desktop/desktopWatchlist';
+import { generateWebWatchlistCommentary } from '../watchlist/watchlistCommentary';
+import { WatchlistCommentaryPreview } from '../watchlist/WatchlistCommentaryPreview';
+import { WebWatchlistEditor } from '../watchlist/WebWatchlistEditor';
 import {
   boardOptions,
   defaultScreenPreferences,
@@ -53,6 +57,8 @@ export function SettingsPage({
   const [watchlistFeishuEnabled, setWatchlistFeishuEnabled] = useState(false);
   const [watchlistFeishuChatId, setWatchlistFeishuChatId] = useState('');
   const [watchlistPlatformUrl, setWatchlistPlatformUrl] = useState('');
+  const [watchlist, setWatchlist] = useState(readDesktopWatchlist);
+  const desktopRuntime = isDesktopRuntime();
   const saveNotificationMutation = useMutation({
     mutationFn: saveNotificationSettings,
     onSuccess: (result) => {
@@ -98,28 +104,15 @@ export function SettingsPage({
     }
   });
   const manualWatchlistNotificationMutation = useMutation({
-    mutationFn: async (email: string) => {
-      const watchlist = readDesktopWatchlist();
-      if (!watchlist.length) throw new Error('请先在行情悬浮窗添加自选股');
-      const quotes = await fetchStockQuotes({
-        symbols: watchlist.map((stock) => stock.code),
-        refresh: true
-      });
-      const market = await fetchMarketIndex({ refresh: true });
-      const result = await fetchWatchlistCommentary(buildDesktopWatchlistCommentaryRequest({
-        watchlist,
-        quotes,
-        market,
-        userEmail: email,
-        manual: true
-      }));
-      if (result.delivery.status !== 'sent') throw new Error(result.delivery.message);
-      return result;
-    },
+    mutationFn: (email: string) => generateWebWatchlistCommentary({
+      watchlist,
+      userEmail: email,
+      manual: true
+    }),
     onSuccess: (result) => {
       notifications.show({
-        color: 'teal',
-        title: '真实自选锐评已发送',
+        color: result.delivery.status === 'sent' ? 'teal' : 'orange',
+        title: result.delivery.status === 'sent' ? '真实自选锐评已发送' : '锐评已生成，但未推送',
         message: `${result.title} · ${result.delivery.message}`
       });
     },
@@ -149,6 +142,8 @@ export function SettingsPage({
     }
     setNotificationEmail(normalizeEmailInput(userEmail));
   }, [userEmail]);
+
+  useEffect(() => subscribeDesktopWatchlist(setWatchlist), []);
 
   useEffect(() => {
     const data = notificationQuery.data;
@@ -305,13 +300,14 @@ export function SettingsPage({
         </SimpleGrid>
       </Paper>
 
+      {!desktopRuntime ? (
       <Paper className="settings-card watchlist-feishu-settings" withBorder>
         <Group justify="space-between" align="flex-start" mb="md">
           <Group gap="sm" align="flex-start" wrap="nowrap">
             <ThemeIcon color="teal" variant="light" size="lg"><Bot size={19} /></ThemeIcon>
             <div>
               <Text fw={900}>自选锐评群订阅</Text>
-              <Text size="sm" c="dimmed">每个交易时段锐评生成后，以飞书 Card 2.0 推送到指定群聊。</Text>
+              <Text size="sm" c="dimmed">在 Web 工作台维护自选、生成锐评，并以飞书 Card 2.0 推送到指定群聊。</Text>
             </div>
           </Group>
           <Group gap="xs">
@@ -324,10 +320,15 @@ export function SettingsPage({
           </Group>
         </Group>
 
+        <WebWatchlistEditor
+          watchlist={watchlist}
+          onChange={(nextWatchlist) => setWatchlist(writeDesktopWatchlist(nextWatchlist))}
+        />
+
         <div className="watchlist-feishu-switch-row">
           <Switch
             label="开启自选锐评飞书群推送"
-            description="自动任务只在 A 股连续交易时段推送；手动触发可随时发送最新可用行情快照。"
+            description="Web 工作台打开时，在 A 股连续交易时段每 30 分钟自动触发；也可随时手动生成。"
             checked={watchlistFeishuEnabled}
             onChange={(event) => setWatchlistFeishuEnabled(event.currentTarget.checked)}
           />
@@ -378,14 +379,18 @@ export function SettingsPage({
               variant="light"
               leftSection={<Send size={16} />}
               loading={manualWatchlistNotificationMutation.isPending}
-              disabled={!watchlistFeishuEnabled || !effectiveNotificationEmail || !watchlistFeishuChatId.trim() || !watchlistPlatformUrl.trim() || !savedWatchlistConfigMatches}
+              disabled={!watchlist.length || !watchlistFeishuEnabled || !effectiveNotificationEmail || !watchlistFeishuChatId.trim() || !watchlistPlatformUrl.trim() || !savedWatchlistConfigMatches}
               onClick={() => manualWatchlistNotificationMutation.mutate(effectiveNotificationEmail)}
             >
               立即推送真实锐评
             </Button>
           </Group>
         </Group>
+        {manualWatchlistNotificationMutation.data ? (
+          <WatchlistCommentaryPreview response={manualWatchlistNotificationMutation.data} />
+        ) : null}
       </Paper>
+      ) : null}
 
       <Paper className="settings-card" withBorder>
         <Group justify="space-between" align="flex-start" mb="md">
