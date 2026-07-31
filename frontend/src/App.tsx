@@ -53,7 +53,6 @@ import {
   type ScreenPreferences
 } from './features/settings/settingsModel';
 import { StockAnalysisPage } from './features/stock/StockAnalysisPage';
-import { WebWatchlistCommentaryScheduler } from './features/watchlist/WebWatchlistCommentaryScheduler';
 import {
   fetchConfig,
   fetchScreenReport,
@@ -643,7 +642,6 @@ function AppShell() {
 
   return (
     <AppStateContext.Provider value={state}>
-      {!desktopRuntime && !staticMode ? <WebWatchlistCommentaryScheduler userEmail={userEmail} /> : null}
       <Box className="terminal-shell">
         <aside className="side-rail">
           <div className="rail-brand">

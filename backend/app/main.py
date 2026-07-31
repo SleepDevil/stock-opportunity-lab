@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
 from app.config import CONFIG
+from app.routers.watchlist import router as watchlist_router
 from app.models import (
     ApiMessage,
     BacktestRequest,
@@ -122,6 +123,7 @@ from app.utils import display_date, json_records, normalize_trade_date
 
 
 app = FastAPI(title="Stock Opportunity Lab API", version="0.1.0")
+app.include_router(watchlist_router)
 SCREEN_TASKS = TaskManager(max_workers=2)
 QUANT_TASKS = TaskManager(max_workers=1)
 T = TypeVar("T")

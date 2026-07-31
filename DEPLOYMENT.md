@@ -40,6 +40,8 @@ curl -fsS http://127.0.0.1:8000/api/health
 | `STOCK_LAB_WATCHLIST_COMMENTARY_FEISHU_ENABLED` | 是否默认开启自选锐评群推送；`true`/`false` |
 | `STOCK_LAB_WATCHLIST_COMMENTARY_FEISHU_CHAT_ID` | 默认订阅群；支持数字群 ID 或 `oc_` 开头的 open_chat_id |
 | `STOCK_LAB_WATCHLIST_COMMENTARY_PLATFORM_URL` | 卡片内个股分析链接的网站根地址 |
+| `STOCK_LAB_WATCHLIST_COMMENTARY_DEFAULT_WATCHLIST` | FaaS 首次启动时的默认自选 JSON 数组；Web 保存后优先使用服务端数据库中的名单 |
+| `STOCK_LAB_WATCHLIST_COMMENTARY_TIMER_NAME` | FaaS Timer 触发器名称；服务端仅接受名称完全匹配的 Timer CloudEvent |
 | `STOCK_LAB_AI_PROVIDER` | 锐评生成后端：`auto`、`zhipu`、`command` 或 `rules`；默认 `auto` |
 | `STOCK_LAB_ZHIPU_API_KEY` | 智谱开放平台 API Key；配置后默认调用免费模型 |
 | `STOCK_LAB_ZHIPU_MODEL` | 智谱模型编码，默认 `glm-4.7-flash` |
@@ -56,6 +58,8 @@ curl -fsS http://127.0.0.1:8000/api/health
 - 单机部署可以挂载 `STOCK_LAB_DATA_DIR` 并使用 SQLite。
 - 多实例部署应配置外部 Postgres。
 - 行情缓存和报告可以重建；学习记录、用户设置和参数实验应定期备份。
+
+自选锐评名单和定时投递幂等记录也使用同一数据库。FaaS 多实例或需要跨发布保留用户编辑时，应配置外部 Postgres；仅使用实例 `/tmp` SQLite 时，应同时配置默认自选环境变量作为发布后的安全回退。
 
 ## Web 部署验收
 

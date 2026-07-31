@@ -1262,3 +1262,13 @@ export type NotificationSettings = {
   watchlist_commentary_feishu_chat_id?: string | null;
   watchlist_commentary_platform_url?: string | null;
 };
+
+export type ServerWatchlist = {
+  user_email: string;
+  stocks: Array<{
+    code: string;
+    name: string;
+  }>;
+  source: 'stored' | 'deployment_default' | 'empty';
+  updated_at?: string | null;
+};

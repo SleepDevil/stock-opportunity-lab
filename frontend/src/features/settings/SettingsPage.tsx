@@ -8,16 +8,20 @@ import { Bot, Link2, Mail, MessageSquareText, Send, Settings2 } from 'lucide-rea
 import { ConfigPanel } from '../../components/ConfigPanel';
 import {
   fetchNotificationSettings,
+  fetchServerWatchlist,
   saveNotificationSettings,
+  saveServerWatchlist,
   sendTestNotification
 } from '../../lib/api';
 import { isDesktopRuntime } from '../../lib/runtime';
 import type { AppConfig, NotificationSettings } from '../../types/api';
 import {
-  readDesktopWatchlist,
-  subscribeDesktopWatchlist,
-  writeDesktopWatchlist
+  readDesktopWatchlist
 } from '../desktop/desktopWatchlist';
+import {
+  normalizeDesktopWatchlist,
+  type DesktopWatchStock
+} from '../desktop/desktopWidgetModel';
 import { generateWebWatchlistCommentary } from '../watchlist/watchlistCommentary';
 import { WatchlistCommentaryPreview } from '../watchlist/WatchlistCommentaryPreview';
 import { WebWatchlistEditor } from '../watchlist/WebWatchlistEditor';
@@ -49,16 +53,25 @@ export function SettingsPage({
 }: SettingsPageProps) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const notificationQuery = useQuery({
-    queryKey: ['notification-settings', userEmail],
-    queryFn: () => fetchNotificationSettings(userEmail || undefined)
-  });
+  const desktopRuntime = isDesktopRuntime();
   const [notificationEmail, setNotificationEmail] = useState(normalizeEmailInput(userEmail));
   const [watchlistFeishuEnabled, setWatchlistFeishuEnabled] = useState(false);
   const [watchlistFeishuChatId, setWatchlistFeishuChatId] = useState('');
   const [watchlistPlatformUrl, setWatchlistPlatformUrl] = useState('');
-  const [watchlist, setWatchlist] = useState(readDesktopWatchlist);
-  const desktopRuntime = isDesktopRuntime();
+  const [watchlist, setWatchlist] = useState<DesktopWatchStock[]>(readDesktopWatchlist);
+  const savedAccountEmail = normalizeEmailInput(userEmail);
+  const effectiveNotificationEmail = normalizeEmailInput(userEmail || notificationEmail);
+  const notificationQuery = useQuery({
+    queryKey: ['notification-settings', userEmail],
+    queryFn: () => fetchNotificationSettings(userEmail || undefined)
+  });
+  const watchlistQuery = useQuery({
+    queryKey: ['server-watchlist', savedAccountEmail],
+    queryFn: () => fetchServerWatchlist(savedAccountEmail),
+    enabled: !desktopRuntime && Boolean(savedAccountEmail),
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false
+  });
   const saveNotificationMutation = useMutation({
     mutationFn: saveNotificationSettings,
     onSuccess: (result) => {
@@ -103,6 +116,46 @@ export function SettingsPage({
       });
     }
   });
+  const saveWatchlistSubscriptionMutation = useMutation({
+    mutationFn: async () => {
+      const settings = await saveNotificationSettings(notificationSettingsPayload());
+      const email = normalizeEmailInput(settings.user_email ?? notificationEmail);
+      if (!email) {
+        throw new Error('请先填写邮箱作为登录标识');
+      }
+      const savedWatchlist = await saveServerWatchlist({
+        user_email: email,
+        stocks: normalizeDesktopWatchlist(watchlist)
+      });
+      return { settings, savedWatchlist };
+    },
+    onSuccess: ({ settings, savedWatchlist }) => {
+      const savedEmail = settings.user_email ?? '';
+      setNotificationEmail(normalizeEmailInput(savedEmail));
+      setUserEmail(savedEmail);
+      setScreenPreferences({
+        boardExclusionEnabled: Boolean(settings.board_exclusion_enabled),
+        excludedBoards: sanitizeBoards(settings.excluded_boards)
+      });
+      setWatchlist(normalizeDesktopWatchlist(savedWatchlist.stocks));
+      queryClient.setQueryData(['notification-settings', savedEmail], settings);
+      queryClient.setQueryData(['server-watchlist', normalizeEmailInput(savedEmail)], savedWatchlist);
+      notifications.show({
+        color: 'teal',
+        title: '自选与群订阅已保存',
+        message: watchlistFeishuEnabled
+          ? `服务端定时器会按 ${savedWatchlist.stocks.length} 只自选推送到群聊。`
+          : '自选名单已持久化到服务端，自动群推送保持关闭。'
+      });
+    },
+    onError: (error) => {
+      notifications.show({
+        color: 'red',
+        title: '自选订阅保存失败',
+        message: error instanceof Error ? error.message : '请检查自选名单、邮箱与群订阅配置'
+      });
+    }
+  });
   const manualWatchlistNotificationMutation = useMutation({
     mutationFn: (email: string) => generateWebWatchlistCommentary({
       watchlist,
@@ -126,7 +179,6 @@ export function SettingsPage({
   });
   const activeLabels = boardOptions.filter((item) => screenPreferences.excludedBoards.includes(item.value)).map((item) => item.label);
   const requestPreview = screenPreferences.boardExclusionEnabled ? screenPreferences.excludedBoards : [];
-  const effectiveNotificationEmail = normalizeEmailInput(userEmail || notificationEmail);
   const aiConfigured = Boolean(config?.ai?.configured);
   const aiModelLabel = config?.ai?.model || (config?.ai?.provider === 'external_command' ? '外部 AI' : '智谱 GLM');
   const savedWatchlistConfigMatches = Boolean(
@@ -134,6 +186,17 @@ export function SettingsPage({
     && Boolean(notificationQuery.data.watchlist_commentary_feishu_enabled) === watchlistFeishuEnabled
     && (notificationQuery.data.watchlist_commentary_feishu_chat_id ?? '') === watchlistFeishuChatId.trim()
     && (notificationQuery.data.watchlist_commentary_platform_url ?? '') === watchlistPlatformUrl.trim()
+  );
+  const serverWatchlistKey = normalizeDesktopWatchlist(watchlistQuery.data?.stocks ?? [])
+    .map((stock) => `${stock.code}:${stock.name}`)
+    .join('|');
+  const currentWatchlistKey = normalizeDesktopWatchlist(watchlist)
+    .map((stock) => `${stock.code}:${stock.name}`)
+    .join('|');
+  const savedWatchlistMatches = Boolean(
+    watchlistQuery.data
+    && watchlistQuery.data.user_email === effectiveNotificationEmail
+    && serverWatchlistKey === currentWatchlistKey
   );
 
   useEffect(() => {
@@ -143,7 +206,12 @@ export function SettingsPage({
     setNotificationEmail(normalizeEmailInput(userEmail));
   }, [userEmail]);
 
-  useEffect(() => subscribeDesktopWatchlist(setWatchlist), []);
+  useEffect(() => {
+    if (!watchlistQuery.data) {
+      return;
+    }
+    setWatchlist(normalizeDesktopWatchlist(watchlistQuery.data.stocks));
+  }, [watchlistQuery.data]);
 
   useEffect(() => {
     const data = notificationQuery.data;
@@ -317,18 +385,21 @@ export function SettingsPage({
             <Badge color={watchlistFeishuEnabled ? 'teal' : 'gray'} variant="light">
               {watchlistFeishuEnabled ? '自动推送' : '仅本地展示'}
             </Badge>
+            <Badge color={savedWatchlistMatches ? 'blue' : 'orange'} variant="light">
+              {watchlistQuery.isLoading ? '读取服务端' : savedWatchlistMatches ? '服务端已保存' : '有未保存变更'}
+            </Badge>
           </Group>
         </Group>
 
         <WebWatchlistEditor
           watchlist={watchlist}
-          onChange={(nextWatchlist) => setWatchlist(writeDesktopWatchlist(nextWatchlist))}
+          onChange={(nextWatchlist) => setWatchlist(normalizeDesktopWatchlist(nextWatchlist))}
         />
 
         <div className="watchlist-feishu-switch-row">
           <Switch
             label="开启自选锐评飞书群推送"
-            description="Web 工作台打开时，在 A 股连续交易时段每 30 分钟自动触发；也可随时手动生成。"
+            description="由服务端 FaaS 在 A 股交易日的 10 个半小时槽位自动触发；关闭 Web 页面也会继续运行。"
             checked={watchlistFeishuEnabled}
             onChange={(event) => setWatchlistFeishuEnabled(event.currentTarget.checked)}
           />
@@ -354,7 +425,7 @@ export function SettingsPage({
         </SimpleGrid>
 
         <div className="watchlist-feishu-flow" aria-label="锐评群推送流程">
-          <span>半小时行情快照</span><i>→</i><span>AI 风趣锐评</span><i>→</i><span>飞书群卡片</span><i>→</i><span>点击股票看走势</span>
+          <span>FaaS 定时巡场</span><i>→</i><span>完整分时 + AI 锐评</span><i>→</i><span>飞书群卡片</span><i>→</i><span>点击股票看走势</span>
         </div>
         <Text size="xs" c="dimmed" mt="xs">
           当前生成引擎：{aiConfigured ? aiModelLabel : '行情规则代笔'}。模型 API Key 仅从服务端环境变量读取，不会保存到页面或下发到浏览器。
@@ -362,24 +433,24 @@ export function SettingsPage({
 
         <Group justify="space-between" align="flex-end" mt="md" gap="md">
           <Text size="xs" c="dimmed" className="watchlist-feishu-permission-note">
-            机器人需已加入目标群，并具备 im:message 发送消息权限；修改配置后请先保存，再用当前自选真实行情立即推送。
+            机器人需已加入目标群，并具备 im:message 发送消息权限；自选和订阅会一起保存到服务端，Web 无需保持打开。
           </Text>
           <Group gap="xs" wrap="nowrap">
             <Button
               color="dark"
               leftSection={<Settings2 size={16} />}
-              loading={saveNotificationMutation.isPending}
+              loading={saveWatchlistSubscriptionMutation.isPending}
               disabled={notificationQuery.isLoading || !normalizeEmailInput(notificationEmail) || (watchlistFeishuEnabled && (!watchlistFeishuChatId.trim() || !watchlistPlatformUrl.trim()))}
-              onClick={() => saveNotificationMutation.mutate(notificationSettingsPayload())}
+              onClick={() => saveWatchlistSubscriptionMutation.mutate()}
             >
-              保存群订阅
+              保存自选与订阅
             </Button>
             <Button
               color="teal"
               variant="light"
               leftSection={<Send size={16} />}
               loading={manualWatchlistNotificationMutation.isPending}
-              disabled={!watchlist.length || !watchlistFeishuEnabled || !effectiveNotificationEmail || !watchlistFeishuChatId.trim() || !watchlistPlatformUrl.trim() || !savedWatchlistConfigMatches}
+              disabled={!watchlist.length || !watchlistFeishuEnabled || !effectiveNotificationEmail || !watchlistFeishuChatId.trim() || !watchlistPlatformUrl.trim() || !savedWatchlistConfigMatches || !savedWatchlistMatches}
               onClick={() => manualWatchlistNotificationMutation.mutate(effectiveNotificationEmail)}
             >
               立即推送真实锐评

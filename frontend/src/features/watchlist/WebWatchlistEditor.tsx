@@ -45,8 +45,8 @@ export function WebWatchlistEditor({
     <section className="web-watchlist-editor" aria-label="Web 自选名单">
       <Group justify="space-between" align="flex-start" gap="md">
         <div>
-          <Text fw={900}>Web 自选名单</Text>
-          <Text size="xs" c="dimmed">锐评只读取这里的股票；最多 {DESKTOP_WATCHLIST_LIMIT} 只。</Text>
+          <Text fw={900}>服务端自选名单</Text>
+          <Text size="xs" c="dimmed">保存后由 FaaS 定时读取；最多 {DESKTOP_WATCHLIST_LIMIT} 只。</Text>
         </div>
         <Badge color={watchlist.length ? 'teal' : 'gray'} variant="light">{watchlist.length} 只</Badge>
       </Group>
@@ -112,7 +112,7 @@ export function WebWatchlistEditor({
         </div>
       ) : (
         <div className="web-watchlist-empty">
-          <Plus size={16} />输入股票后添加；无需打开桌面悬浮窗。
+          <Plus size={16} />输入股票后添加，保存后关闭浏览器也会继续巡场。
         </div>
       )}
     </section>

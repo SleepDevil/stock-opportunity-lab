@@ -26,6 +26,7 @@ import type {
   ScreenReportsResponse,
   ScreenResponse,
   ScreenResult,
+  ServerWatchlist,
   StockAnalysisResponse,
   StockFinancialsResponse,
   StockIntelligenceResponse,
@@ -77,7 +78,7 @@ async function clientAuthToken(): Promise<string> {
 }
 
 function requiresClientAuth(path: string): boolean {
-  return path.startsWith('/api/notification-settings') || path.startsWith('/api/watchlist-commentary');
+  return path.startsWith('/api/notification-settings') || path.startsWith('/api/watchlist');
 }
 
 function readableHttpError(response: Response, message: string): Error {
@@ -540,6 +541,22 @@ export function fetchNotificationSettings(userEmail?: string): Promise<Notificat
 
 export function saveNotificationSettings(input: NotificationSettings): Promise<NotificationSettings> {
   return request<NotificationSettings>('/api/notification-settings', {
+    method: 'PUT',
+    headers,
+    body: JSON.stringify(input)
+  });
+}
+
+export function fetchServerWatchlist(userEmail: string): Promise<ServerWatchlist> {
+  const params = new URLSearchParams({ user_email: userEmail });
+  return request<ServerWatchlist>(`/api/watchlist?${params.toString()}`);
+}
+
+export function saveServerWatchlist(input: {
+  user_email: string;
+  stocks: ServerWatchlist['stocks'];
+}): Promise<ServerWatchlist> {
+  return request<ServerWatchlist>('/api/watchlist', {
     method: 'PUT',
     headers,
     body: JSON.stringify(input)

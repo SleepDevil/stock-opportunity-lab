@@ -555,7 +555,12 @@ def ai_payload(
 
 
 def runtime_ai_provider(config: AppConfig) -> str:
-    provider = os.getenv("STOCK_LAB_AI_PROVIDER", config.ai_provider).strip().lower()
+    configured = config.ai_provider.strip().lower()
+    provider = (
+        configured
+        if configured != "auto"
+        else os.getenv("STOCK_LAB_AI_PROVIDER", configured).strip().lower()
+    )
     return provider if provider in {"auto", "zhipu", "command", "rules"} else "auto"
 
 

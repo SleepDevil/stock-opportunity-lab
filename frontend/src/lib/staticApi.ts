@@ -5,6 +5,7 @@ import type {
   QuantRunsResponse,
   QuantStrategyCatalogResponse,
   ScreenReportsResponse,
+  ServerWatchlist,
   StrategyExperiment,
   StrategyOptimizationResponse,
   WechatKnowledgeResponse
@@ -232,6 +233,13 @@ function notificationSettings(): NotificationSettings {
   };
 }
 
+const serverWatchlist: ServerWatchlist = {
+  user_email: 'static@example.com',
+  stocks: [],
+  source: 'empty',
+  updated_at: null
+};
+
 function normalizedPath(path: string): string {
   try {
     return new URL(path, 'https://static.stock-lab.local').pathname;
@@ -260,7 +268,8 @@ export async function staticRequest<T>(path: string, init?: RequestInit): Promis
     '/api/screen-reports': screenReports,
     '/api/quant/runs': quantRuns,
     '/api/quant/strategies': quantStrategies,
-    '/api/notification-settings': notificationSettings()
+    '/api/notification-settings': notificationSettings(),
+    '/api/watchlist': serverWatchlist
   };
 
   if (route in payloads) {
