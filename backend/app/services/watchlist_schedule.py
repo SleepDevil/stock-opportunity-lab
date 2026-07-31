@@ -285,10 +285,19 @@ def validate_timer_event(event: dict[str, Any]) -> dict[str, Any]:
     if not expected:
         raise PermissionError("服务端定时器尚未配置")
     event_type = str(event.get("type") or "").strip().lower()
-    timer_name = str(event.get("timer_name") or "").strip()
-    if event_type != "timer" or not hmac.compare_digest(timer_name, expected):
+    event_data = parse_event_data(event)
+    if event_type == "timer":
+        timer_name = str(event.get("timer_name") or event_data.get("timer_name") or "").strip()
+    elif event_type == "faas.timer.event":
+        source = str(event.get("source") or "").strip()
+        if not source.startswith("/faas/event/timer/"):
+            raise PermissionError("拒绝非 FaaS 定时器调用")
+        timer_name = str(event_data.get("timer_name") or "").strip()
+    else:
         raise PermissionError("拒绝非 FaaS 定时器调用")
-    return parse_event_data(event)
+    if not hmac.compare_digest(timer_name, expected):
+        raise PermissionError("拒绝非 FaaS 定时器调用")
+    return event_data
 
 
 def run_watchlist_timer(
