@@ -286,7 +286,10 @@ def validate_timer_event(event: dict[str, Any]) -> dict[str, Any]:
         raise PermissionError("服务端定时器尚未配置")
     event_type = str(event.get("type") or "").strip().lower()
     event_data = parse_event_data(event)
-    if event_type == "timer":
+    if not event_type:
+        event_data = event
+        timer_name = str(event_data.get("timer_name") or "").strip()
+    elif event_type == "timer":
         timer_name = str(event.get("timer_name") or event_data.get("timer_name") or "").strip()
     elif event_type == "faas.timer.event":
         source = str(event.get("source") or "").strip()

@@ -119,6 +119,10 @@ def test_timer_endpoint_requires_matching_faas_timer_name(tmp_path, monkeypatch)
             "data": '{"timer_name":"private-timer-name","dry_run":true}',
         },
     )
+    accepted_http_runtime_payload = client.post(
+        "/",
+        json={"timer_name": "private-timer-name", "dry_run": True},
+    )
 
     assert rejected.status_code == 403
     assert rejected_faas_event.status_code == 403
@@ -128,6 +132,8 @@ def test_timer_endpoint_requires_matching_faas_timer_name(tmp_path, monkeypatch)
     assert accepted.json()["watchlist_sizes"] == [2]
     assert accepted_faas_event.status_code == 200
     assert accepted_faas_event.json()["status"] == "dry_run"
+    assert accepted_http_runtime_payload.status_code == 200
+    assert accepted_http_runtime_payload.json()["status"] == "dry_run"
 
 
 def test_scheduled_delivery_uses_real_snapshot_and_deduplicates(tmp_path, monkeypatch) -> None:

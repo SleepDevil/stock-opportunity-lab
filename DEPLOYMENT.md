@@ -41,7 +41,7 @@ curl -fsS http://127.0.0.1:8000/api/health
 | `STOCK_LAB_WATCHLIST_COMMENTARY_FEISHU_CHAT_ID` | 默认订阅群；支持数字群 ID 或 `oc_` 开头的 open_chat_id |
 | `STOCK_LAB_WATCHLIST_COMMENTARY_PLATFORM_URL` | 卡片内个股分析链接的网站根地址 |
 | `STOCK_LAB_WATCHLIST_COMMENTARY_DEFAULT_WATCHLIST` | FaaS 首次启动时的默认自选 JSON 数组；Web 保存后优先使用服务端数据库中的名单 |
-| `STOCK_LAB_WATCHLIST_COMMENTARY_TIMER_NAME` | FaaS Timer 触发器名称；创建触发器时须把 `{"timer_name":"同一名称"}` 配为“触发消息”，服务端仅接受消息中名称完全匹配的标准 Timer CloudEvent |
+| `STOCK_LAB_WATCHLIST_COMMENTARY_TIMER_NAME` | FaaS Timer 触发器名称；创建触发器时须把 `{"timer_name":"同一名称"}` 配为“触发消息”，服务端兼容标准 Timer CloudEvent 与 HTTP Runtime 的直传消息，且仅接受名称完全匹配的请求 |
 | `STOCK_LAB_AI_PROVIDER` | 锐评生成后端：`auto`、`zhipu`、`command` 或 `rules`；默认 `auto` |
 | `STOCK_LAB_ZHIPU_API_KEY` | 智谱开放平台 API Key；配置后默认调用免费模型 |
 | `STOCK_LAB_ZHIPU_MODEL` | 智谱模型编码，默认 `glm-4.7-flash` |
