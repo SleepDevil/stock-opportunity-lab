@@ -30,6 +30,19 @@ def disable_external_ai(monkeypatch) -> None:
     )
     monkeypatch.setattr(watchlist_commentary, "CONFIG", safe_config)
     monkeypatch.setattr(main, "CONFIG", safe_config)
+    monkeypatch.setattr(
+        watchlist_commentary,
+        "load_stock_intraday_sparklines",
+        lambda symbols, **_kwargs: {
+            "trade_date": "20260730",
+            "source": "test:intraday",
+            "is_stale": True,
+            "sparklines": [
+                {"code": code, "trade_date": "20260730", "previous_close": None, "points": []}
+                for code in symbols
+            ],
+        },
+    )
 
 
 def sample_request() -> dict[str, object]:
@@ -123,6 +136,110 @@ def test_external_ai_receives_factual_guardrails(monkeypatch) -> None:
     assert any("Do not invent" in rule for rule in payload["constraints"])
 
 
+def test_intraday_enrichment_distinguishes_closing_limit_from_all_day_limit() -> None:
+    request = {
+        "slot": "20260730-manual",
+        "captured_at": "2026-07-30T17:11:00+08:00",
+        "session": "closed",
+        "manual": True,
+        "quotes": [
+            {
+                "code": "001309",
+                "name": "德明利",
+                "price": 110.0,
+                "pct_change": 10.0,
+                "open": 102.0,
+                "high": 110.0,
+                "low": 101.0,
+                "previous_close": 100.0,
+            }
+        ],
+    }
+
+    enriched = watchlist_commentary.enrich_watchlist_commentary_request(
+        request,
+        refresh=True,
+        loader=lambda _symbols, **_kwargs: {
+            "trade_date": "20260730",
+            "source": "test:full-minute-series",
+            "is_stale": False,
+            "sparklines": [
+                {
+                    "code": "001309",
+                    "trade_date": "20260730",
+                    "previous_close": 100.0,
+                    "points": [
+                        {"time": "2026-07-30 09:30", "price": 102.0},
+                        {"time": "2026-07-30 10:30", "price": 104.0},
+                        {"time": "2026-07-30 11:30", "price": 106.0},
+                        {"time": "2026-07-30 13:30", "price": 108.0},
+                        {"time": "2026-07-30 14:30", "price": 110.0},
+                        {"time": "2026-07-30 15:00", "price": 110.0},
+                    ],
+                }
+            ],
+        },
+    )
+
+    context = enriched["intraday_facts"]
+    fact = context["stocks"][0]
+    assert context["status"] == "available"
+    assert context["scope"] == "full_available_minute_series"
+    assert fact["minute_point_count"] == 6
+    assert fact["pct_from_previous_close"] == {
+        "open": 2.0,
+        "high": 10.0,
+        "low": 1.0,
+        "latest": 10.0,
+        "intraday_range": 9.0,
+    }
+    assert fact["limit_up"]["at_latest"] is True
+    assert fact["limit_up"]["first_touch_time"] == "14:30"
+    assert fact["limit_up"]["all_observed_session_at_limit"] is False
+    assert fact["limit_up"]["state"] == "at_limit_but_not_all_session"
+    assert "不能描述为全天封死涨停" in fact["limit_up"]["evidence_zh"]
+
+
+def test_unsupported_all_day_limit_claim_falls_back_to_verified_rules(monkeypatch) -> None:
+    request = sample_request()
+    request["quotes"] = [{
+        "code": "001309",
+        "name": "德明利",
+        "price": 110.0,
+        "pct_change": 10.0,
+        "open": 102.0,
+        "high": 110.0,
+        "low": 101.0,
+        "previous_close": 100.0,
+    }]
+    request["intraday_facts"] = {
+        "status": "available",
+        "stocks": [{
+            "code": "001309",
+            "name": "德明利",
+            "available": True,
+            "limit_up": {
+                "state": "at_limit_but_not_all_session",
+                "evidence_zh": "收盘价处于涨停价，但盘中并非全程封板。",
+            },
+            "limit_down": {"state": "not_touched", "evidence_zh": "未触及跌停价。"},
+        }],
+    }
+    monkeypatch.setenv("STOCK_LAB_AI_COMMAND", "bad-path-ai")
+    monkeypatch.setattr(
+        watchlist_commentary,
+        "run_external_ai",
+        lambda *_args, **_kwargs: "德明利今天全天封死涨停，从开盘到收盘都没给机会。",
+    )
+
+    result = watchlist_commentary.generate_watchlist_commentary(request)
+
+    assert result["mode"] == "rules_fallback"
+    assert result["provider"] == "rules_fallback"
+    assert "暂时不可用" in result["note"]
+    assert "盘中并非全程封板" in result["commentary"]
+
+
 def test_zhipu_ai_generates_structured_watchlist_commentary(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
@@ -185,6 +302,8 @@ def test_zhipu_ai_generates_structured_watchlist_commentary(monkeypatch) -> None
     assert body["model"] == "glm-4.7-flash"
     assert body["thinking"] == {"type": "disabled"}
     assert body["response_format"] == {"type": "json_object"}
+    assert "intraday_facts" in body["messages"][0]["content"]
+    assert "涨跌幅只代表快照时点" in body["messages"][0]["content"]
     assert "zhipu-test-secret" not in request.data.decode("utf-8")
 
 
@@ -441,8 +560,24 @@ def test_manual_watchlist_commentary_sends_latest_snapshot_outside_trading_sessi
         sent["config"] = config
         return True
 
+    intraday_call: dict[str, object] = {}
+
+    def fake_intraday_loader(symbols, **kwargs):
+        intraday_call["symbols"] = symbols
+        intraday_call.update(kwargs)
+        return {
+            "trade_date": "20260730",
+            "source": "test:intraday",
+            "is_stale": False,
+            "sparklines": [
+                {"code": code, "trade_date": "20260730", "previous_close": None, "points": []}
+                for code in symbols
+            ],
+        }
+
     monkeypatch.setattr(main, "CONFIG", config)
     monkeypatch.setattr(main, "send_feishu_card", fake_send)
+    monkeypatch.setattr(watchlist_commentary, "load_stock_intraday_sparklines", fake_intraday_loader)
     request = sample_request()
     request.update({
         "user_email": "trader@example.com",
@@ -457,6 +592,11 @@ def test_manual_watchlist_commentary_sends_latest_snapshot_outside_trading_sessi
     assert response.json()["delivery"] == {
         "status": "sent",
         "message": "手动锐评已发送到订阅群",
+    }
+    assert intraday_call == {
+        "symbols": ["002920", "001309"],
+        "refresh": True,
+        "point_limit": None,
     }
     assert sent["chat_id"] == "oc_abcdefgh12345678"
     assert "手动触发" in str(sent["card"])

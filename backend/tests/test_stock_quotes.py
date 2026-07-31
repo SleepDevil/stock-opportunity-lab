@@ -128,6 +128,35 @@ def test_load_stock_intraday_sparklines_preserves_order_and_compacts_points() ->
     assert result["is_stale"] is False
 
 
+def test_load_stock_intraday_sparklines_can_preserve_every_minute_for_ai_facts() -> None:
+    stock_quotes._INTRADAY_CACHE.clear()
+    source_points = []
+    for index in range(150):
+        minute = 9 * 60 + 30 + index
+        source_points.append({
+            "time": f"2026-07-15 {minute // 60:02d}:{minute % 60:02d}",
+            "price": 11.0,
+            "average": 10.8,
+        })
+    source_points[73]["price"] = 10.75
+
+    result = stock_quotes.load_stock_intraday_sparklines(
+        ["001309"],
+        refresh=True,
+        fetcher=lambda _code: {
+            "code": "001309",
+            "trade_date": "20260715",
+            "previous_close": 10.0,
+            "points": source_points,
+        },
+        point_limit=None,
+    )
+
+    points = result["sparklines"][0]["points"]
+    assert len(points) == 150
+    assert points[73]["price"] == 10.75
+
+
 def test_load_stock_intraday_sparklines_isolates_single_symbol_failure() -> None:
     stock_quotes._INTRADAY_CACHE.clear()
 

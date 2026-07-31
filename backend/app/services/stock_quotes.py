@@ -319,6 +319,7 @@ def load_stock_intraday_sparklines(
     symbols: list[str],
     refresh: bool = False,
     fetcher: Callable[[str], dict[str, Any]] | None = None,
+    point_limit: int | None = MAX_INTRADAY_POINTS,
 ) -> dict[str, Any]:
     codes = normalize_quote_symbols(symbols)
     if not codes:
@@ -379,7 +380,10 @@ def load_stock_intraday_sparklines(
         "source": "eastmoney:stock/trends2/get",
         "is_stale": bool(stale_codes or failed_codes),
         "message": "；".join(messages) or None,
-        "sparklines": [results[code] for code in codes],
+        "sparklines": [
+            intraday_sparkline_with_point_limit(results[code], point_limit)
+            for code in codes
+        ],
     }
 
 
@@ -498,7 +502,7 @@ def normalize_market_index_points(points: list[Any]) -> list[dict[str, Any]]:
 
 
 def normalize_intraday_sparkline(code: str, value: dict[str, Any]) -> dict[str, Any]:
-    points = compact_intraday_points([
+    points = [
         {
             "time": str(point.get("time") or ""),
             "price": optional_number(point.get("price")),
@@ -506,13 +510,23 @@ def normalize_intraday_sparkline(code: str, value: dict[str, Any]) -> dict[str, 
         }
         for point in value.get("points", [])
         if isinstance(point, dict) and optional_number(point.get("price")) is not None
-    ])
+    ]
     return {
         "code": code,
         "trade_date": str(value.get("trade_date") or intraday_trade_date(points) or "") or None,
         "previous_close": optional_number(value.get("previous_close")),
         "points": points,
     }
+
+
+def intraday_sparkline_with_point_limit(
+    value: dict[str, Any],
+    point_limit: int | None,
+) -> dict[str, Any]:
+    result = dict(value)
+    points = [dict(point) for point in value.get("points", []) if isinstance(point, dict)]
+    result["points"] = points if point_limit is None else compact_intraday_points(points, point_limit)
+    return result
 
 
 def empty_intraday_sparkline(code: str) -> dict[str, Any]:

@@ -785,7 +785,7 @@ function WatchlistCommentaryPanel({
       <div className="desktop-widget-state">
         <Star size={21} />
         <strong>先添加自选股，再让 AI 开麦</strong>
-        <span>锐评只读取你的自选名单和当次行情快照。</span>
+        <span>锐评只读取你的自选名单、当次行情快照和当日分时。</span>
       </div>
     );
   }
@@ -794,7 +794,7 @@ function WatchlistCommentaryPanel({
       <div className="desktop-widget-state">
         <Loader size="sm" />
         <strong>AI 正在盘一盘今天的自选</strong>
-        <span>只根据当前涨跌、成交与大盘快照生成，不补写场外故事。</span>
+        <span>根据当前涨跌、成交、完整可用分时与大盘快照生成，不补写场外故事。</span>
       </div>
     );
   }

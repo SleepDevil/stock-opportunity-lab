@@ -113,7 +113,10 @@ from app.services.wechat_knowledge import (
     wechat_capability_note,
     wechat_gateway_status,
 )
-from app.services.watchlist_commentary import generate_watchlist_commentary
+from app.services.watchlist_commentary import (
+    enrich_watchlist_commentary_request,
+    generate_watchlist_commentary,
+)
 from app.services.watchlist_commentary_card import build_watchlist_commentary_card
 from app.utils import display_date, json_records, normalize_trade_date
 
@@ -645,7 +648,8 @@ def market_index(refresh: bool = False) -> MarketIndexResponse:
 )
 def watchlist_commentary(request: WatchlistCommentaryRequest) -> WatchlistCommentaryResponse:
     try:
-        result = generate_watchlist_commentary(request.model_dump(), config=CONFIG)
+        payload = enrich_watchlist_commentary_request(request.model_dump(), refresh=request.manual)
+        result = generate_watchlist_commentary(payload, config=CONFIG)
         result["delivery"] = deliver_watchlist_commentary(result, request)
         return WatchlistCommentaryResponse(**result)
     except Exception as exc:
