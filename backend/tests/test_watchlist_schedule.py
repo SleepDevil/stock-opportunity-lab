@@ -74,12 +74,31 @@ def test_server_watchlist_requires_frontend_auth(tmp_path, monkeypatch) -> None:
     assert response.status_code == 403
 
 
-def test_scheduled_slot_includes_close_retry_windows() -> None:
-    assert watchlist_schedule.scheduled_slot(datetime.fromisoformat("2026-07-31T09:35:00+08:00")).key == "20260731-0930"
-    assert watchlist_schedule.scheduled_slot(datetime.fromisoformat("2026-07-31T11:35:00+08:00")).key == "20260731-1130"
-    assert watchlist_schedule.scheduled_slot(datetime.fromisoformat("2026-07-31T15:05:00+08:00")).key == "20260731-1500"
+def test_scheduled_slot_only_allows_three_daily_windows() -> None:
+    assert watchlist_schedule.scheduled_slot(datetime.fromisoformat("2026-07-31T10:00:00+08:00")).key == "20260731-1000"
+    assert watchlist_schedule.scheduled_slot(datetime.fromisoformat("2026-07-31T11:30:30+08:00")).key == "20260731-1130"
+    assert watchlist_schedule.scheduled_slot(datetime.fromisoformat("2026-07-31T15:01:59+08:00")).key == "20260731-1500"
+    assert watchlist_schedule.scheduled_slot(datetime.fromisoformat("2026-07-31T09:30:00+08:00")) is None
+    assert watchlist_schedule.scheduled_slot(datetime.fromisoformat("2026-07-31T10:30:00+08:00")) is None
+    assert watchlist_schedule.scheduled_slot(datetime.fromisoformat("2026-07-31T15:02:00+08:00")) is None
     assert watchlist_schedule.scheduled_slot(datetime.fromisoformat("2026-07-31T12:00:00+08:00")) is None
     assert watchlist_schedule.scheduled_slot(datetime.fromisoformat("2026-08-01T10:00:00+08:00")) is None
+
+
+def test_outside_schedule_does_not_load_persisted_targets(tmp_path, monkeypatch) -> None:
+    config = AppConfig(data_dir=tmp_path, database_url=None)
+    monkeypatch.setattr(
+        watchlist_schedule,
+        "commentary_targets",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("outside schedule must not access storage")),
+    )
+
+    result = watchlist_schedule.run_watchlist_timer(
+        config,
+        now=datetime.fromisoformat("2026-07-31T10:30:00+08:00"),
+    )
+
+    assert result["status"] == "outside_schedule"
 
 
 def test_timer_endpoint_requires_matching_faas_timer_name(tmp_path, monkeypatch) -> None:

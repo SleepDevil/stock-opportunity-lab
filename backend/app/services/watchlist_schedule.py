@@ -28,19 +28,12 @@ MAX_WATCHLIST_STOCKS = 8
 DEFAULT_TARGET_ID = "__deployment_default__"
 DEFAULT_WATCHLIST_ENV = "STOCK_LAB_WATCHLIST_COMMENTARY_DEFAULT_WATCHLIST"
 TIMER_NAME_ENV = "STOCK_LAB_WATCHLIST_COMMENTARY_TIMER_NAME"
-SLOT_RETRY_WINDOW = timedelta(minutes=10)
+SLOT_TRIGGER_GRACE = timedelta(minutes=2)
 PROCESSING_STALE_AFTER = timedelta(minutes=4)
 MARKET_FRESHNESS_LIMIT = timedelta(minutes=20)
 SCHEDULED_SLOT_TIMES = (
-    clock_time(9, 30),
     clock_time(10, 0),
-    clock_time(10, 30),
-    clock_time(11, 0),
     clock_time(11, 30),
-    clock_time(13, 0),
-    clock_time(13, 30),
-    clock_time(14, 0),
-    clock_time(14, 30),
     clock_time(15, 0),
 )
 _STOCK_CODE_RE = re.compile(r"^\d{6}$")
@@ -256,7 +249,7 @@ def scheduled_slot(now: datetime | None = None) -> ScheduledSlot | None:
     for slot_time in SCHEDULED_SLOT_TIMES:
         due_at = datetime.combine(current.date(), slot_time, tzinfo=SHANGHAI_TZ)
         delay = current - due_at
-        if timedelta(0) <= delay < SLOT_RETRY_WINDOW:
+        if timedelta(0) <= delay < SLOT_TRIGGER_GRACE:
             label = due_at.strftime("%H:%M")
             latest = ScheduledSlot(
                 trade_date=due_at.strftime("%Y%m%d"),
@@ -311,8 +304,8 @@ def run_watchlist_timer(
 ) -> dict[str, Any]:
     current = (now or datetime.now(SHANGHAI_TZ)).astimezone(SHANGHAI_TZ)
     slot = scheduled_slot(current)
-    targets = commentary_targets(config)
     if dry_run:
+        targets = commentary_targets(config)
         return {
             "status": "dry_run",
             "current_time": current.isoformat(timespec="seconds"),
@@ -324,8 +317,8 @@ def run_watchlist_timer(
         return {
             "status": "outside_schedule",
             "current_time": current.isoformat(timespec="seconds"),
-            "target_count": len(targets),
         }
+    targets = commentary_targets(config)
     if not targets:
         return {"status": "no_enabled_watchlists", "slot": slot.key, "results": []}
 
