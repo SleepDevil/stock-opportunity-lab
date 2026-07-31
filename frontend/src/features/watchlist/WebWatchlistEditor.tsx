@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { ActionIcon, Badge, Button, Group, Loader, Text, TextInput } from '@mantine/core';
+import { useDebouncedValue } from '@mantine/hooks';
 import { useQuery } from '@tanstack/react-query';
 import { ExternalLink, Plus, Search, Trash2 } from 'lucide-react';
 
@@ -22,16 +23,18 @@ export function WebWatchlistEditor({
 }) {
   const [query, setQuery] = useState('');
   const trimmedQuery = query.trim();
+  const [debouncedQuery] = useDebouncedValue(trimmedQuery, 350);
+  const waitingForDebounce = Boolean(trimmedQuery && debouncedQuery !== trimmedQuery);
   const searchQuery = useQuery({
-    queryKey: ['web-watchlist', 'stock-search', trimmedQuery],
+    queryKey: ['web-watchlist', 'stock-search', debouncedQuery],
     queryFn: ({ signal }) => fetchStockSearch({
-      query: trimmedQuery,
+      query: debouncedQuery,
       date: toTradeDate(todayInputValue()),
       limit: 6,
       signal,
       timeoutMs: 6_000
     }),
-    enabled: Boolean(trimmedQuery),
+    enabled: Boolean(debouncedQuery),
     staleTime: 5 * 60_000,
     retry: false
   });
@@ -54,16 +57,17 @@ export function WebWatchlistEditor({
       <TextInput
         mt="sm"
         value={query}
-        leftSection={searchQuery.isFetching ? <Loader size={14} /> : <Search size={15} />}
+        leftSection={waitingForDebounce || searchQuery.isFetching ? <Loader size={14} /> : <Search size={15} />}
         placeholder="输入股票名称、代码或首字母添加自选"
         onChange={(event) => setQuery(event.currentTarget.value)}
       />
 
       {trimmedQuery ? (
         <div className="web-watchlist-search-results">
-          {searchQuery.error ? <span>搜索失败，请稍后重试。</span> : null}
-          {!searchQuery.isFetching && !searchQuery.error && !(searchQuery.data?.results.length) ? <span>没有匹配的股票。</span> : null}
-          {(searchQuery.data?.results ?? []).map((item) => {
+          {waitingForDebounce ? <span>正在匹配名称、代码和拼音…</span> : null}
+          {!waitingForDebounce && searchQuery.error ? <span>{searchQuery.error instanceof Error ? searchQuery.error.message : '搜索失败，请稍后重试。'}</span> : null}
+          {!waitingForDebounce && !searchQuery.isFetching && !searchQuery.error && !(searchQuery.data?.results.length) ? <span>没有匹配的股票。</span> : null}
+          {!waitingForDebounce && (searchQuery.data?.results ?? []).map((item) => {
             const selected = watchlist.some((stock) => stock.code === item.code);
             const full = watchlist.length >= DESKTOP_WATCHLIST_LIMIT;
             return (

@@ -71,6 +71,7 @@ PINYIN_FULL_OVERRIDES = {
 }
 MIN_KLINE_HISTORY_POINTS = 20
 STOCK_NAME_PREFIX_RE = re.compile(r"^(?:\*?ST|SST|XD|XR|DR|N|C)+", re.IGNORECASE)
+BUNDLED_STOCK_DIRECTORY_PATH = Path(__file__).resolve().parents[1] / "resources" / "a_share_symbols.csv"
 _SEARCH_UNIVERSE_CACHE: dict[tuple[str, str, tuple[tuple[str, int, int], ...]], pd.DataFrame] = {}
 
 
@@ -191,13 +192,9 @@ def run_stock_search(
 ) -> dict[str, Any]:
     normalized_date = normalize_trade_date(trade_date)
     if not refresh:
-        cached_rows = search_cached_stock_rows(config, normalized_date, query, limit=limit)
-        if cached_rows:
-            return {
-                "query": query,
-                "trade_date": normalized_date,
-                "results": [stock_search_item(row) for _, row in cached_rows],
-            }
+        cached = run_cached_stock_search(config, query, normalized_date, limit=limit)
+        if cached is not None:
+            return cached
     spot = normalize_spot(provider.spot(normalized_date, refresh=refresh))
     return {
         "query": query,
@@ -213,9 +210,10 @@ def run_cached_stock_search(
     limit: int = 10,
 ) -> dict[str, Any] | None:
     normalized_date = normalize_trade_date(trade_date)
-    cached_rows = search_cached_stock_rows(config, normalized_date, query, limit=limit)
-    if not cached_rows:
+    universe = cached_stock_search_universe(config, normalized_date)
+    if universe.empty:
         return None
+    cached_rows = search_stock_rows(universe, query, limit=limit)
     return {
         "query": query,
         "trade_date": normalized_date,
@@ -295,6 +293,7 @@ def cached_stock_search_universe(config: AppConfig, trade_date: str) -> pd.DataF
 def cached_search_paths(config: AppConfig, trade_date: str) -> list[Path]:
     candidates = [config.raw_dir / f"spot_{trade_date}.csv"]
     candidates.extend(sorted(config.raw_dir.glob("spot_*.csv"), reverse=True))
+    candidates.append(BUNDLED_STOCK_DIRECTORY_PATH)
     seen: set[str] = set()
     paths = []
     for path in candidates:

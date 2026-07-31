@@ -2772,6 +2772,21 @@ def test_stock_search_matches_initial_prefix(tmp_path: Path) -> None:
     assert result["results"][0]["initials"] == "payh"
 
 
+def test_stock_search_uses_bundled_directory_without_live_market_data(tmp_path: Path) -> None:
+    class BrokenSpotProvider:
+        def spot(self, trade_date: str, refresh: bool = False) -> pd.DataFrame:
+            raise AssertionError("autocomplete must not download the live market snapshot")
+
+    config = AppConfig(data_dir=tmp_path, screen=ScreenConfig(max_candidates=5))
+
+    matched = run_stock_search(BrokenSpotProvider(), config, "dml", "20260731", refresh=False, limit=5)
+    missing = run_stock_search(BrokenSpotProvider(), config, "this-stock-does-not-exist", "20260731", refresh=False, limit=5)
+
+    assert matched["results"][0]["code"] == "001309"
+    assert matched["results"][0]["name"] == "德明利"
+    assert missing["results"] == []
+
+
 def test_stock_search_matches_rare_chinese_initial_prefix(tmp_path: Path) -> None:
     spot_csv = tmp_path / "spot.csv"
     spot_csv.write_text(
