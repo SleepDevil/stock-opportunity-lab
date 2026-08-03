@@ -114,6 +114,68 @@ def test_rule_commentary_summarizes_only_supplied_quotes() -> None:
     assert result["source_updated_at"] == "2026-07-30T10:41:03+08:00"
 
 
+def test_latest_pct_ranking_beats_watchlist_order_and_drives_rule_commentary() -> None:
+    request = sample_request()
+    request["quotes"] = [
+        {"code": "002920", "name": "德赛西威", "price": 87.54, "pct_change": 1.04},
+        {"code": "603986", "name": "兆易创新", "price": 188.10, "pct_change": -10.00},
+        {"code": "600172", "name": "黄河旋风", "price": 5.90, "pct_change": -1.34},
+        {"code": "603228", "name": "景旺电子", "price": 77.80, "pct_change": 2.45},
+        {"code": "001309", "name": "德明利", "price": 321.20, "pct_change": -9.56},
+        {"code": "002384", "name": "东山精密", "price": 43.70, "pct_change": -5.06},
+    ]
+
+    result = watchlist_commentary.generate_watchlist_commentary(request)
+
+    assert result["summary"]["rising"] == 2
+    assert result["summary"]["leader"] == {
+        "code": "603228",
+        "name": "景旺电子",
+        "pct_change": 2.45,
+    }
+    assert "景旺电子以 +2.45% 领涨" in result["commentary"]
+    assert "小德子" in result["commentary"]
+    assert "小兆子" in result["commentary"]
+
+
+def test_extreme_rule_persona_promotes_deye_and_roasts_xiaodezi() -> None:
+    down_request = sample_request()
+    down_request["quotes"] = [{"code": "001309", "name": "德明利", "pct_change": -9.10}]
+    up_request = sample_request()
+    up_request["quotes"] = [{"code": "001309", "name": "德明利", "pct_change": 10.00}]
+
+    down = watchlist_commentary.generate_watchlist_commentary(down_request)
+    up = watchlist_commentary.generate_watchlist_commentary(up_request)
+
+    assert "德明利（小德子）" in down["commentary"]
+    assert "挨两句骂一点都不冤" in down["commentary"]
+    assert "德明利今天得叫德爷" in up["commentary"]
+
+
+def test_intraday_limit_down_touch_uses_hard_roast_even_after_recovery() -> None:
+    request = sample_request()
+    request["quotes"] = [{"code": "001309", "name": "德明利", "pct_change": -2.00}]
+    request["intraday_facts"] = {
+        "status": "available",
+        "stocks": [{
+            "code": "001309",
+            "name": "德明利",
+            "available": True,
+            "limit_down": {
+                "touched": True,
+                "state": "touched_then_opened",
+                "evidence_zh": "盘中曾触及跌停价，但最新价已经离开。",
+            },
+            "limit_up": {"touched": False, "state": "not_touched"},
+        }],
+    }
+
+    result = watchlist_commentary.generate_watchlist_commentary(request)
+
+    assert "德明利（小德子）" in result["commentary"]
+    assert "盘中都去跌停门口报过到了" in result["commentary"]
+
+
 def test_external_ai_receives_factual_guardrails(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
@@ -134,6 +196,113 @@ def test_external_ai_receives_factual_guardrails(monkeypatch) -> None:
     assert isinstance(payload, dict)
     assert payload["watchlist_quotes"] == sample_request()["quotes"]
     assert any("Do not invent" in rule for rule in payload["constraints"])
+
+
+def test_ai_payload_includes_authoritative_ranking_and_extreme_personas(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+    request = sample_request()
+    request["quotes"] = [
+        {"code": "002920", "name": "德赛西威", "pct_change": 1.04},
+        {"code": "603228", "name": "景旺电子", "pct_change": 2.45},
+        {"code": "001309", "name": "德明利", "pct_change": -9.56},
+    ]
+
+    def fake_ai(_command: str, payload: dict[str, object]) -> str:
+        captured.update(payload)
+        return "景旺电子按最新涨幅领跑，德赛西威稳在红盘；德明利（小德子）九个点往下蹿，今天这走势挨骂不冤。"
+
+    monkeypatch.setenv("STOCK_LAB_AI_COMMAND", "persona-ai")
+    monkeypatch.setattr(watchlist_commentary, "run_external_ai", fake_ai)
+
+    result = watchlist_commentary.generate_watchlist_commentary(request)
+
+    assert result["mode"] == "external_ai"
+    assert captured["latest_pct_ranking"] == [
+        {"rank": 1, "code": "603228", "name": "景旺电子", "pct_change": 2.45},
+        {"rank": 2, "code": "002920", "name": "德赛西威", "pct_change": 1.04},
+        {"rank": 3, "code": "001309", "name": "德明利", "pct_change": -9.56},
+    ]
+    profiles = {profile["code"]: profile for profile in captured["tone_profiles"]}
+    assert profiles["001309"]["intensity"] == "roast_hard"
+    assert profiles["001309"]["suggested_nickname"] == "小德子"
+
+
+def test_ai_wrong_leader_claim_is_rejected_and_falls_back_to_verified_ranking(monkeypatch) -> None:
+    request = sample_request()
+    request["quotes"] = [
+        {"code": "002920", "name": "德赛西威", "pct_change": 1.04},
+        {"code": "603228", "name": "景旺电子", "pct_change": 2.45},
+        {"code": "001309", "name": "德明利", "pct_change": -9.56},
+    ]
+    monkeypatch.setenv("STOCK_LAB_AI_COMMAND", "wrong-ranking-ai")
+    monkeypatch.setattr(
+        watchlist_commentary,
+        "run_external_ai",
+        lambda *_args, **_kwargs: json.dumps(
+            {
+                "title": "德赛西威红盘领涨",
+                "commentary": "今天只有德赛西威跟得上节奏，景旺电子和德明利各忙各的。",
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+    result = watchlist_commentary.generate_watchlist_commentary(request)
+
+    assert result["mode"] == "rules_fallback"
+    assert result["summary"]["leader"]["name"] == "景旺电子"
+    assert "景旺电子以 +2.45% 领涨" in result["commentary"]
+    assert "德赛西威红盘领涨" not in result["title"]
+
+
+def test_ai_wrong_direction_and_opposite_nickname_are_rejected(monkeypatch) -> None:
+    request = sample_request()
+    request["quotes"] = [
+        {"code": "002920", "name": "德赛西威", "pct_change": 1.04},
+        {"code": "603228", "name": "景旺电子", "pct_change": 2.45},
+        {"code": "001309", "name": "德明利", "pct_change": -9.56},
+    ]
+    monkeypatch.setenv("STOCK_LAB_AI_COMMAND", "wrong-direction-ai")
+    monkeypatch.setattr(
+        watchlist_commentary,
+        "run_external_ai",
+        lambda *_args, **_kwargs: json.dumps(
+            {
+                "title": "德爷暴跌，小德子跳水",
+                "commentary": "景旺电子是全场唯一的光，德赛西威也跟着跌了；德明利（小德子）继续跳水。",
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+    result = watchlist_commentary.generate_watchlist_commentary(request)
+
+    assert result["mode"] == "rules_fallback"
+    assert "景旺电子以 +2.45% 领涨" in result["commentary"]
+    assert "德爷暴跌" not in result["title"]
+
+
+def test_ai_bland_extreme_move_without_required_nickname_is_rejected(monkeypatch) -> None:
+    request = sample_request()
+    request["quotes"] = [
+        {"code": "603228", "name": "景旺电子", "pct_change": 2.45},
+        {"code": "001309", "name": "德明利", "pct_change": -9.56},
+    ]
+    monkeypatch.setenv("STOCK_LAB_AI_COMMAND", "bland-ai")
+    monkeypatch.setattr(
+        watchlist_commentary,
+        "run_external_ai",
+        lambda *_args, **_kwargs: "景旺电子领涨，德明利承压明显，整体表现分化。",
+    )
+
+    result = watchlist_commentary.generate_watchlist_commentary(request)
+
+    assert result["mode"] == "rules_fallback"
+    assert "德明利（小德子）" in result["commentary"]
+
+
+def test_ai_markdown_is_normalized_to_plain_commentary() -> None:
+    assert zhipu_ai.normalize_commentary("## **德明利** [今日走势](https://example.com)") == "德明利 今日走势"
 
 
 def test_intraday_enrichment_distinguishes_closing_limit_from_all_day_limit() -> None:
@@ -304,6 +473,8 @@ def test_zhipu_ai_generates_structured_watchlist_commentary(monkeypatch) -> None
     assert body["response_format"] == {"type": "json_object"}
     assert "intraday_facts" in body["messages"][0]["content"]
     assert "涨跌幅只代表快照时点" in body["messages"][0]["content"]
+    assert "只有 summary.leader" in body["messages"][0]["content"]
+    assert "小德子" in body["messages"][0]["content"]
     assert "zhipu-test-secret" not in request.data.decode("utf-8")
 
 

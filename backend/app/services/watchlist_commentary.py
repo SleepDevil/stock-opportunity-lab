@@ -44,6 +44,13 @@ ABSOLUTE_INTRADAY_CLAIMS = (
     "一字跌停",
 )
 NEGATED_CLAIM_MARKERS = ("并非", "不是", "并不", "不能", "不可", "没有", "不算", "谈不上")
+LEADER_CLAIM_TERMS = ("领涨", "领跑", "领队", "扛旗", "MVP", "涨幅第一", "涨幅最高", "最能涨")
+CURRENT_UP_CLAIM_TERMS = ("收涨", "红盘", "上涨", "涨了", "翻红", "飘红", "拉升")
+CURRENT_DOWN_CLAIM_TERMS = ("收跌", "绿盘", "下跌", "跌了", "翻绿", "跳水", "走低", "跟着跌", "回撤")
+DIRECTION_NEGATIONS = ("没", "未", "不", "并非", "不是", "没有")
+ROAST_HARD_PCT = -8.0
+PRAISE_BIG_PCT = 9.5
+STOCK_NAME_DECORATION_RE = re.compile(r"^(?:\*?ST|SST|XD|XR|DR|N|C)+", re.IGNORECASE)
 
 
 def optional_number(value: Any) -> float | None:
@@ -98,6 +105,102 @@ def commentary_summary(quotes: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def latest_pct_ranking(quotes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    measured = []
+    for quote in quotes:
+        pct = quote_pct_change(quote)
+        if pct is None:
+            continue
+        measured.append({
+            "code": str(quote.get("code") or ""),
+            "name": str(quote.get("name") or quote.get("code") or "未知"),
+            "pct_change": round(pct, 2),
+        })
+    measured.sort(key=lambda item: (-float(item["pct_change"]), item["code"]))
+    return [{"rank": index, **item} for index, item in enumerate(measured, start=1)]
+
+
+def stock_name_anchor(name: str) -> str:
+    cleaned = STOCK_NAME_DECORATION_RE.sub("", re.sub(r"\s+", "", str(name or ""))).strip("*")
+    chinese = re.findall(r"[\u3400-\u9fff]", cleaned)
+    if chinese:
+        return chinese[0]
+    alphanumeric = re.sub(r"[^0-9A-Za-z]", "", cleaned)
+    return alphanumeric[:1].upper() or "股"
+
+
+def commentary_tone_profiles(
+    quotes: list[dict[str, Any]],
+    intraday_facts: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    facts_by_code = {
+        str(fact.get("code") or "").zfill(6): fact
+        for fact in (intraday_facts or {}).get("stocks") or []
+        if isinstance(fact, dict)
+    }
+    profiles: list[dict[str, Any]] = []
+    for quote in quotes:
+        code = str(quote.get("code") or "").zfill(6)
+        name = str(quote.get("name") or code or "未知")
+        pct = quote_pct_change(quote)
+        fact = facts_by_code.get(code) or {}
+        limit_down = fact.get("limit_down") if isinstance(fact.get("limit_down"), dict) else {}
+        limit_up = fact.get("limit_up") if isinstance(fact.get("limit_up"), dict) else {}
+        down_touched = bool(limit_down.get("touched"))
+        up_touched = bool(limit_up.get("touched"))
+        anchor = stock_name_anchor(name)
+        if down_touched or (pct is not None and pct <= ROAST_HARD_PCT):
+            intensity = "roast_hard"
+            nickname = f"小{anchor}子"
+            reason = "盘中曾触及跌停价" if down_touched else f"最新涨跌幅为 {format_pct(pct)}，接近跌停区间"
+        elif up_touched or (pct is not None and pct >= PRAISE_BIG_PCT):
+            intensity = "praise_big"
+            nickname = f"{anchor}爷"
+            reason = "盘中曾触及涨停价" if up_touched else f"最新涨跌幅为 {format_pct(pct)}，接近涨停区间"
+        else:
+            intensity = "normal"
+            nickname = None
+            reason = "普通盘面波动"
+        evidence = limit_down.get("evidence_zh") if intensity == "roast_hard" else limit_up.get("evidence_zh")
+        profiles.append({
+            "code": code,
+            "name": name,
+            "pct_change": round(pct, 2) if pct is not None else None,
+            "intensity": intensity,
+            "suggested_nickname": nickname,
+            "reason": reason,
+            "limit_down_state": limit_down.get("state"),
+            "limit_up_state": limit_up.get("state"),
+            "evidence_zh": evidence,
+        })
+    return profiles
+
+
+def spicy_profile_sentence(profile: dict[str, Any]) -> str:
+    name = str(profile.get("name") or profile.get("code") or "这只股票")
+    nickname = str(profile.get("suggested_nickname") or name)
+    pct = format_pct(profile.get("pct_change"))
+    if profile.get("intensity") == "roast_hard":
+        state = str(profile.get("limit_down_state") or "")
+        if state == "touched_then_opened":
+            return f"{name}（{nickname}）盘中都去跌停门口报过到了，后来虽撬开，小作文也别急着给它洗白。"
+        if state == "at_limit_but_not_all_session":
+            return f"{name}（{nickname}）最新还趴在跌停价上，今天这份答卷皱得像从碎纸机里捞出来的。"
+        if state == "all_observed_session_at_limit":
+            return f"{name}（{nickname}）在全部可用分钟观测中持续处于跌停价，这走势连狡辩稿都省了。"
+        return f"{name}（{nickname}）报 {pct}，今天把 K 线当滑梯，挨两句骂一点都不冤。"
+    if profile.get("intensity") == "praise_big":
+        state = str(profile.get("limit_up_state") or "")
+        if state == "touched_then_opened":
+            return f"{name}今天先叫{nickname}，盘中摸过涨停又开板，排面拿过了，但别把路径吹成从头封到尾。"
+        if state == "at_limit_but_not_all_session":
+            return f"{name}今天得叫{nickname}，最新站在涨停价，不过这顶轿子并不是从开盘一路抬到现在。"
+        if state == "all_observed_session_at_limit":
+            return f"{name}今天得叫{nickname}，在全部可用分钟观测中持续处于涨停价，主桌先给它留个位。"
+        return f"{name}今天得叫{nickname}，{pct} 往桌上一拍，主桌席位自己就端过来了。"
+    return ""
+
+
 def commentary_stocks(quotes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [
         {
@@ -145,6 +248,7 @@ def deterministic_commentary(
     captured_at: datetime,
     is_stale: bool,
     intraday_facts: dict[str, Any] | None = None,
+    tone_profiles: list[dict[str, Any]] | None = None,
 ) -> str:
     total = int(summary.get("total") or 0)
     measured = int(summary.get("measured") or 0)
@@ -161,10 +265,40 @@ def deterministic_commentary(
     parts = [
         f"{prefix}{rising} 只红盘、{falling} 只绿盘、{flat} 只原地踏步，平均涨跌 {format_pct(average_pct)}。"
     ]
+    profiles_by_code = {
+        str(profile.get("code") or ""): profile
+        for profile in tone_profiles or []
+        if isinstance(profile, dict)
+    }
+    profiled_codes: set[str] = set()
     if leader:
-        parts.append(f"{leader['name']}以 {format_pct(leader['pct_change'])} 暂领队，今天走路自带鼓点。")
+        leader_code = str(leader.get("code") or "")
+        leader_pct = optional_number(leader.get("pct_change")) or 0
+        leader_profile = profiles_by_code.get(leader_code) or {}
+        if leader_pct > 0:
+            if leader_profile.get("intensity") == "praise_big":
+                parts.append(spicy_profile_sentence(leader_profile))
+                profiled_codes.add(leader_code)
+            else:
+                parts.append(f"{leader['name']}以 {format_pct(leader_pct)} 领涨，今天走路自带鼓点。")
+        else:
+            parts.append(f"{leader['name']}以 {format_pct(leader_pct)} 暂时最抗跌，只能算这桌里雨衣穿得最厚。")
     if laggard and laggard.get("code") != leader.get("code"):
-        parts.append(f"{laggard['name']}报 {format_pct(laggard['pct_change'])}，目前负责给组合增加一点现实主义。")
+        laggard_code = str(laggard.get("code") or "")
+        laggard_profile = profiles_by_code.get(laggard_code) or {}
+        if laggard_profile.get("intensity") == "roast_hard":
+            parts.append(spicy_profile_sentence(laggard_profile))
+            profiled_codes.add(laggard_code)
+        else:
+            parts.append(f"{laggard['name']}报 {format_pct(laggard['pct_change'])}，目前负责给组合增加一点现实主义。")
+    for profile in tone_profiles or []:
+        code = str(profile.get("code") or "")
+        if code in profiled_codes or profile.get("intensity") not in {"roast_hard", "praise_big"}:
+            continue
+        sentence = spicy_profile_sentence(profile)
+        if sentence:
+            parts.append(sentence)
+            profiled_codes.add(code)
     market_pct = quote_pct_change(market or {})
     if market_pct is not None:
         relation = "跑赢" if (optional_number(average_pct) or 0) > market_pct else "暂未跑赢"
@@ -524,6 +658,8 @@ def ai_payload(
     summary: dict[str, Any],
     captured_at: datetime,
 ) -> dict[str, Any]:
+    quotes = [dict(item) for item in request.get("quotes") or []]
+    intraday_facts = request.get("intraday_facts") if isinstance(request.get("intraday_facts"), dict) else None
     return {
         "task": "A-share watchlist intraday witty commentary",
         "language": "zh-CN",
@@ -531,6 +667,7 @@ def ai_payload(
         "session": request.get("session"),
         "constraints": [
             "Only use the supplied market snapshot, quote fields, and computed summary.",
+            "Treat summary, latest_pct_ranking, and rising/falling/flat counts as authoritative; only summary.leader may be called the leader or top gainer.",
             "Do not invent news, causes, policy, fundamentals, positions, orders, or future price moves.",
             "A current or closing percentage is a point-in-time state, not evidence of the whole intraday path.",
             "Use intraday_facts for path claims; distinguish touching a price limit, currently being at the limit, reopening after a touch, and remaining there across all available observations.",
@@ -538,13 +675,16 @@ def ai_payload(
             "Keep facts and playful metaphors clearly distinguishable.",
             "Do not give buy, sell, chase, add-position, or timing instructions.",
             "Mention every watchlist stock by its complete supplied name at least once.",
-            "Write about 100-260 Chinese characters as one to three short paragraphs, without Markdown or URLs.",
-            "The tone may be witty and lightly teasing, but never insulting or sensational.",
+            "Write about 120-360 Chinese characters as one to three short paragraphs, without Markdown or URLs.",
+            "Follow tone_profiles: roast_hard should be sharp and use suggested_nickname after the full name; praise_big should celebrate with suggested_nickname.",
+            "Roast the stock's verified price action, never the user, investors, employees, or invented company conduct.",
         ],
         "summary": summary,
+        "latest_pct_ranking": latest_pct_ranking(quotes),
+        "tone_profiles": commentary_tone_profiles(quotes, intraday_facts),
         "market": request.get("market"),
-        "watchlist_quotes": request.get("quotes") or [],
-        "intraday_facts": request.get("intraday_facts") or {
+        "watchlist_quotes": quotes,
+        "intraday_facts": intraday_facts or {
             "status": "unavailable",
             "stocks": [],
             "scope": "no_intraday_path_supplied",
@@ -637,6 +777,104 @@ def validate_intraday_claims(commentary: str) -> None:
             cursor = index + len(claim)
 
 
+def validate_ranking_claims(
+    title: str,
+    commentary: str,
+    summary: dict[str, Any],
+    stocks: list[dict[str, Any]],
+) -> None:
+    leader = summary.get("leader") if isinstance(summary.get("leader"), dict) else None
+    if not leader:
+        return
+    leader_code = str(leader.get("code") or "")
+    text = f"{title}。{commentary}"
+    for stock in stocks:
+        code = str(stock.get("code") or "")
+        name = str(stock.get("name") or "")
+        if not name or code == leader_code:
+            continue
+        for term in LEADER_CLAIM_TERMS:
+            stock_then_claim = fr"{re.escape(name)}.{{0,6}}{re.escape(term)}"
+            explicit_claim_then_stock = fr"{re.escape(term)}(?:的是|为|：|:)\s*{re.escape(name)}"
+            if re.search(fr"{stock_then_claim}|{explicit_claim_then_stock}", text):
+                raise ValueError(f"AI 把非最高涨幅股票 {name} 错写成领涨者")
+
+    if int(summary.get("rising") or 0) > 1:
+        if re.search(r"(?:唯一|只有).{0,6}(?:红|涨|亮|光|撑场|争气)", text):
+            raise ValueError("AI 在多只股票上涨时错写成唯一红盘")
+        for stock in stocks:
+            name = str(stock.get("name") or "")
+            if name and re.search(
+                fr"(?:只有|仅有|就){re.escape(name)}.{{0,10}}(?:红盘|上涨|收涨|跟得上|撑场|争气)",
+                text,
+            ):
+                raise ValueError(f"AI 错写成只有 {name} 一只股票上涨")
+
+
+def has_unnegated_claim(clause: str, terms: tuple[str, ...]) -> bool:
+    for term in terms:
+        cursor = 0
+        while (index := clause.find(term, cursor)) >= 0:
+            prefix = clause[max(0, index - 4):index]
+            if not any(prefix.endswith(marker) for marker in DIRECTION_NEGATIONS):
+                return True
+            cursor = index + len(term)
+    return False
+
+
+def validate_direction_claims(commentary: str, stocks: list[dict[str, Any]]) -> None:
+    normalized = re.sub(r"[*_`#]", "", commentary)
+    clauses = [clause for clause in re.split(r"[。！？!?；;，,、\n]", normalized) if clause]
+    for stock in stocks:
+        name = str(stock.get("name") or "")
+        pct = quote_pct_change(stock)
+        if not name or pct is None or abs(pct) < 0.005:
+            continue
+        for clause in clauses:
+            if name not in clause:
+                continue
+            if pct > 0 and has_unnegated_claim(clause, CURRENT_DOWN_CLAIM_TERMS):
+                raise ValueError(f"AI 把上涨股票 {name} 错写成下跌")
+            if pct < 0 and has_unnegated_claim(clause, CURRENT_UP_CLAIM_TERMS):
+                raise ValueError(f"AI 把下跌股票 {name} 错写成上涨")
+
+
+def validate_tone_profile_claims(
+    title: str,
+    commentary: str,
+    tone_profiles: list[dict[str, Any]],
+) -> None:
+    text = f"{title}。{commentary}"
+    allowed_nicknames = {
+        str(profile.get("suggested_nickname") or "")
+        for profile in tone_profiles
+        if profile.get("suggested_nickname")
+    }
+    for profile in tone_profiles:
+        intensity = str(profile.get("intensity") or "normal")
+        name = str(profile.get("name") or "")
+        nickname = str(profile.get("suggested_nickname") or "")
+        if intensity in {"roast_hard", "praise_big"} and (not name or name not in text or not nickname or nickname not in text):
+            raise ValueError(f"AI 没有按极端行情人设同时使用 {name} 的全名和称呼 {nickname}")
+        anchor = stock_name_anchor(str(profile.get("name") or ""))
+        opposite = f"{anchor}爷" if intensity == "roast_hard" else f"小{anchor}子"
+        if intensity in {"roast_hard", "praise_big"} and opposite in text and opposite not in allowed_nicknames:
+            raise ValueError(f"AI 对 {profile.get('name')} 使用了涨跌方向相反的称呼 {opposite}")
+
+
+def validate_generated_commentary(
+    title: str,
+    commentary: str,
+    summary: dict[str, Any],
+    stocks: list[dict[str, Any]],
+    tone_profiles: list[dict[str, Any]],
+) -> None:
+    validate_intraday_claims(commentary)
+    validate_ranking_claims(title, commentary, summary, stocks)
+    validate_direction_claims(commentary, stocks)
+    validate_tone_profile_claims(title, commentary, tone_profiles)
+
+
 def unconfigured_ai_note(config: AppConfig) -> str:
     provider = runtime_ai_provider(config)
     if provider == "rules":
@@ -658,12 +896,14 @@ def generate_watchlist_commentary(
     summary = commentary_summary(quotes)
     title = commentary_title(summary)
     intraday_facts = request.get("intraday_facts") if isinstance(request.get("intraday_facts"), dict) else None
+    tone_profiles = commentary_tone_profiles(quotes, intraday_facts)
     fallback = deterministic_commentary(
         summary,
         market,
         captured_at,
         bool(request.get("is_stale")),
         intraday_facts,
+        tone_profiles,
     )
     commentary = fallback
     mode = "rules_fallback"
@@ -682,7 +922,7 @@ def generate_watchlist_commentary(
                     payload,
                     fallback_title=title,
                 )
-                validate_intraday_claims(generated.commentary)
+                validate_generated_commentary(generated.title, generated.commentary, summary, quotes, tone_profiles)
                 title = generated.title
                 commentary = generated.commentary
                 provider = "zhipu"
@@ -695,7 +935,7 @@ def generate_watchlist_commentary(
                     run_external_ai(command, payload),
                     title,
                 )
-                validate_intraday_claims(generated_commentary)
+                validate_generated_commentary(generated_title, generated_commentary, summary, quotes, tone_profiles)
                 title = generated_title
                 commentary = generated_commentary
                 provider = "external_command"

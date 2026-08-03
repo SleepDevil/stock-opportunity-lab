@@ -34,6 +34,7 @@ MARKET_FRESHNESS_LIMIT = timedelta(minutes=20)
 SCHEDULED_SLOT_TIMES = (
     clock_time(10, 0),
     clock_time(11, 30),
+    clock_time(14, 0),
     clock_time(15, 0),
 )
 _STOCK_CODE_RE = re.compile(r"^\d{6}$")

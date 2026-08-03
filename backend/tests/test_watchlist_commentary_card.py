@@ -42,7 +42,8 @@ def test_card_uses_card_2_schema_and_links_every_stock() -> None:
     assert "[德赛西威](https://stock.example.com/lab/stock?symbol=002920)" in serialized
     assert "[德明利](https://stock.example.com/lab/stock?symbol=001309)" in serialized
     assert "callback" not in serialized
-    assert "glm-4.7-flash 锐评" in serialized
+    assert "glm-4.7-flash 锐评" not in serialized
+    assert [tag["text"]["content"] for tag in card["header"]["text_tag_list"]] == ["定时巡场"]
     assert "不构成投资建议" in serialized
 
 

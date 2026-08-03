@@ -31,9 +31,6 @@ export function WatchlistCommentaryPreview({ response }: { response: WatchlistCo
           <Text fw={950} size="lg">{response.title}</Text>
         </div>
         <Group gap="xs">
-          <Badge color={response.mode === 'external_ai' ? 'violet' : 'gray'} variant="light">
-            {response.mode === 'external_ai' ? response.model || 'AI 锐评' : '规则兜底'}
-          </Badge>
           <Badge color={delivered ? 'teal' : 'orange'} variant="light">
             {delivered ? '已推送' : '未推送'}
           </Badge>

@@ -20,14 +20,17 @@ WATCHLIST_SYSTEM_PROMPT = """
 
 写作规则：
 1. title 简洁、有画面感，不使用 Markdown，不超过 28 个中文字符。
-2. commentary 使用中文，约 100—260 个中文字符，可分成 1—3 个短段落，风趣、轻松、有分寸。
+2. commentary 使用中文，约 120—360 个中文字符，可分成 1—3 个短段落，像一个懂 A 股的损友在复盘：有梗、辛辣、口语化，少说四平八稳的套话。
 3. 必须至少提到每一只自选股的完整名称一次，后端会把这些名称转换成链接；不要自行输出 URL 或 Markdown 链接。
 4. 只描述给定快照中的价格、涨跌、成交、换手、盘中高低、intraday_facts 和程序汇总，不虚构新闻、原因、政策、基本面、持仓或未来走势。
 5. 涨跌幅只代表快照时点，不能据此反推全天路径。涉及分时过程时必须以 intraday_facts 为准，严格区分“曾触及涨跌停”“当前/收盘位于涨跌停价”“触板后打开”和“全部可用分钟观测持续在涨跌停价”。
 6. 禁止使用“全天封死”“全天涨跌停”“一字板”“从开盘封到收盘”等绝对化说法；即使全部观测点相同，也只能说“在全部可用分时观测中持续处于涨/跌停价”。优先复述 evidence_zh 给出的安全口径。
 7. 不给出买入、卖出、追涨、抄底、加仓、减仓或择时指令，不承诺收益。
-8. 事实与比喻必须能清楚区分；可以调侃行情，不讽刺或贬损用户和公司。
-9. 不要重复风险声明，产品会在卡片底部统一展示。
+8. summary、latest_pct_ranking 和涨跌家数是后端算好的权威事实。只有 summary.leader 可以被称为“领涨、领跑、领队、扛旗、MVP、涨幅第一或最高”；只有 summary.laggard 可以被称为“垫底、最弱或跌幅最大”。不得因为股票在输入列表里排得靠前就给它错误名次。
+9. tone_profiles 是语气指令。遇到 roast_hard，第一次仍要写完整股票名，随后必须使用 suggested_nickname 放开吐槽当天盘面，可以损、可以骂走势，但不能攻击用户、股民、公司员工或编造公司问题。例如德明利接近跌停时可以写“德明利（小德子）今天把刹车当摆设，九个点往下蹿，挨骂不冤”。
+10. 遇到 praise_big，同样先写完整股票名，再使用 suggested_nickname 抬轿；例如德明利涨停时可以称“德明利今天得叫德爷”。盘中曾触及涨跌停时，必须结合对应 evidence_zh 准确说明后来是否开板。
+11. 普通涨跌可以轻松调侃，但极端涨跌不能只写“表现亮眼、承压明显”这类公关腔；要有鲜明态度，同时事实与比喻仍须清楚区分。
+12. 不要重复风险声明，产品会在卡片底部统一展示。
 """.strip()
 
 RATE_LIMIT_RETRY_DELAYS = (2.0, 5.0)
@@ -213,6 +216,9 @@ def normalize_commentary(value: Any) -> str:
     if not isinstance(value, str):
         return ""
     normalized = value.replace("\r\n", "\n").replace("\r", "\n").replace("\x00", "")
+    normalized = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", normalized)
+    normalized = re.sub(r"(\*\*|__|`)", "", normalized)
+    normalized = re.sub(r"(?m)^\s{0,3}#{1,6}\s*", "", normalized)
     normalized = re.sub(r"[ \t]+", " ", normalized)
     normalized = re.sub(r"\n{3,}", "\n\n", normalized)
     return normalized.strip()

@@ -100,13 +100,6 @@ def build_watchlist_commentary_card(result: dict[str, Any], platform_url: str) -
     stocks = result.get("stocks") if isinstance(result.get("stocks"), list) else []
     average_pct = summary.get("average_pct")
     average_color = metric_color(average_pct)
-    mode = str(result.get("mode") or "rules_fallback")
-    model = str(result.get("model") or "").strip()
-    if mode == "external_ai":
-        mode_label = f"{model} 锐评" if model else "AI 锐评"
-    else:
-        mode_label = "规则代笔"
-    mode_color = "green" if mode == "external_ai" else "orange"
     title = str(result.get("title") or "今日自选走势锐评")
     generated_at = card_time(str(result.get("generated_at") or ""))
     source_updated_at = card_time(result.get("source_updated_at"))
@@ -141,11 +134,6 @@ def build_watchlist_commentary_card(result: dict[str, Any], platform_url: str) -
             "template": "green",
             "icon": {"tag": "standard_icon", "token": "chart_colorful"},
             "text_tag_list": [
-                {
-                    "tag": "text_tag",
-                    "text": {"tag": "plain_text", "content": mode_label},
-                    "color": mode_color,
-                },
                 {
                     "tag": "text_tag",
                     "text": {"tag": "plain_text", "content": trigger_label},

@@ -399,7 +399,7 @@ export function SettingsPage({
         <div className="watchlist-feishu-switch-row">
           <Switch
             label="开启自选锐评飞书群推送"
-            description="由服务端 FaaS 在 A 股交易日的 10:00、11:30、15:00 自动触发；关闭 Web 页面也会继续运行。"
+            description="由服务端 FaaS 在 A 股交易日的 10:00、11:30、14:00、15:00 自动触发；关闭 Web 页面也会继续运行。"
             checked={watchlistFeishuEnabled}
             onChange={(event) => setWatchlistFeishuEnabled(event.currentTarget.checked)}
           />
