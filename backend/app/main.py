@@ -84,6 +84,8 @@ from app.services.notification_settings import load_notification_settings, norma
 from app.services.notifications import send_feishu_card, send_feishu_tip
 from app.services.news_theme import empty_news_theme_scan, load_news_theme_scan, run_news_theme_scan
 from app.services.quant_engine import list_quant_runs, load_quant_run, quant_strategy_catalog, run_quant_backtest
+from app.services.screen_generation import generate_screen_response
+from app.services.screen_report_store import load_screen_report_snapshot, list_screen_report_snapshot_dates
 from app.services.screener import latest_screen_date, load_screen_report, load_screen_targets, run_screen
 from app.services.sector_flow import run_sector_constituents, run_sector_flow, run_sector_lookup, sector_constituent_error_message
 from app.services.stock_analysis import (
@@ -396,6 +398,10 @@ def screen_reports() -> ScreenReportsResponse:
             continue
         if len(name) == 8 and name.isdigit():
             dates.append(name)
+    try:
+        dates.extend(list_screen_report_snapshot_dates(CONFIG))
+    except Exception as exc:
+        LOGGER.warning("screen report snapshot list degraded: %s: %s", exc.__class__.__name__, exc)
     dates = sorted(set(dates))
     return ScreenReportsResponse(dates=dates, latest=dates[-1] if dates else None)
 
@@ -404,6 +410,13 @@ def screen_reports() -> ScreenReportsResponse:
 def screen_report(date: str) -> ScreenResponse:
     try:
         trade_date = normalize_trade_date(date)
+        try:
+            snapshot = load_screen_report_snapshot(CONFIG, trade_date)
+        except Exception as exc:
+            LOGGER.warning("screen report snapshot read degraded: %s: %s", exc.__class__.__name__, exc)
+            snapshot = None
+        if snapshot:
+            return ScreenResponse(**snapshot)
         candidates = load_screen_report(CONFIG, trade_date)
         targets = load_screen_targets(CONFIG, trade_date)
         raw_count = load_raw_count(trade_date)
@@ -1112,7 +1125,7 @@ def run_screen_response(
     trade_date: str,
     progress: Callable[[int, str], None] | None = None,
 ) -> ScreenResponse:
-    result = run_screen(
+    return generate_screen_response(
         provider=provider(),
         config=CONFIG,
         trade_date=trade_date,
@@ -1121,30 +1134,7 @@ def run_screen_response(
         enrich=request.enrich,
         exclude_boards=request.exclude_boards,
         progress=progress,
-    )
-    if progress:
-        progress(96, "加载策略记忆并生成解释。")
-    try:
-        learning_summary = load_learning_summary_with_timeout(CONFIG)
-    except Exception:
-        learning_summary = {}
-        if progress:
-            progress(97, "策略记忆读取失败，已使用空摘要生成解释。")
-    payload = build_payload(CONFIG, result.trade_date, result.candidates, learning_summary=learning_summary)
-    analysis = explain(payload)
-    if progress:
-        progress(99, "整理扫描结果。")
-    return ScreenResponse(
-        trade_date=result.trade_date,
-        raw_count=result.raw_count,
-        filtered_count=result.filtered_count,
-        target_count=result.target_count,
-        board_excluded_count=result.board_excluded_count,
-        excluded_boards=result.excluded_boards,
-        candidates=json_records(result.candidates),
-        report_paths=result.report_paths,
-        ai_payload=payload,
-        analysis=analysis,
+        generation_source="manual",
     )
 
 

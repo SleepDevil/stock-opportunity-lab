@@ -103,6 +103,32 @@ def test_outside_schedule_does_not_load_persisted_targets(tmp_path, monkeypatch)
     assert result["status"] == "outside_schedule"
 
 
+def test_close_slot_runs_daily_screen_even_without_watchlist_targets(tmp_path, monkeypatch) -> None:
+    config = AppConfig(data_dir=tmp_path, database_url=None)
+    calls: list[str] = []
+    monkeypatch.setattr(watchlist_schedule, "commentary_targets", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        watchlist_schedule,
+        "run_daily_close_screen",
+        lambda _config, slot, _now: calls.append(slot.key) or {
+            "status": "completed",
+            "trade_date": slot.trade_date,
+            "generation": "generated",
+            "deliveries": [],
+        },
+    )
+
+    result = watchlist_schedule.run_watchlist_timer(
+        config,
+        now=datetime.fromisoformat("2026-07-31T15:00:20+08:00"),
+    )
+
+    assert calls == ["20260731-1500"]
+    assert result["status"] == "completed"
+    assert result["screen_recommendation"]["generation"] == "generated"
+    assert result["results"] == []
+
+
 def test_timer_endpoint_requires_matching_faas_timer_name(tmp_path, monkeypatch) -> None:
     config = AppConfig(
         data_dir=tmp_path,

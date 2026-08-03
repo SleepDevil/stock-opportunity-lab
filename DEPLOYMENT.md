@@ -37,7 +37,7 @@ curl -fsS http://127.0.0.1:8000/api/health
 | `STOCK_LAB_CLIENT_AUTH_SECRET` | CSRF/HMAC 签名密钥，生产环境必须使用随机值 |
 | `STOCK_LAB_FEISHU_APP_ID` | 可选通知应用 ID |
 | `STOCK_LAB_FEISHU_APP_SECRET` | 可选通知应用密钥 |
-| `STOCK_LAB_WATCHLIST_COMMENTARY_FEISHU_ENABLED` | 是否默认开启自选锐评群推送；`true`/`false` |
+| `STOCK_LAB_WATCHLIST_COMMENTARY_FEISHU_ENABLED` | 是否默认开启自选锐评群推送；开启后 15:00 的量化选股卡片也发送到同一群；`true`/`false` |
 | `STOCK_LAB_WATCHLIST_COMMENTARY_FEISHU_CHAT_ID` | 默认订阅群；支持数字群 ID 或 `oc_` 开头的 open_chat_id |
 | `STOCK_LAB_WATCHLIST_COMMENTARY_PLATFORM_URL` | 卡片内个股分析链接的网站根地址 |
 | `STOCK_LAB_WATCHLIST_COMMENTARY_DEFAULT_WATCHLIST` | FaaS 首次启动时的默认自选 JSON 数组；Web 保存后优先使用服务端数据库中的名单 |
@@ -60,6 +60,8 @@ curl -fsS http://127.0.0.1:8000/api/health
 - 行情缓存和报告可以重建；学习记录、用户设置和参数实验应定期备份。
 
 自选锐评名单和定时投递幂等记录也使用同一数据库。FaaS 多实例或需要跨发布保留用户编辑时，应配置外部 Postgres；仅使用实例 `/tmp` SQLite 时，应同时配置默认自选环境变量作为发布后的安全回退。
+
+交易日 15:00 的自动量化选股会同时写入 `data/reports` 兼容文件和数据库中的完整报告快照。Web 的报告列表与详情优先读取数据库快照，手动扫描也走同一保存链路；同一交易日、同一飞书群的收盘选股卡片使用幂等记录避免重复发送。FaaS 若只使用 `/tmp` SQLite，报告仍可能在实例回收或发布后丢失；需要跨实例和跨发布长期保留时必须配置外部 Postgres。
 
 ## Web 部署验收
 

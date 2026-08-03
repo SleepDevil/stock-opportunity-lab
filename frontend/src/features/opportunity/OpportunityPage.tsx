@@ -113,7 +113,7 @@ function OpportunityPageContent() {
           <Group justify="space-between" align="flex-start" mb="md">
             <div>
               <Text fw={800}>盘后机会扫描</Text>
-              <Text size="xs" c="dimmed">生成观察池、价格计划和证据摘要。</Text>
+              <Text size="xs" c="dimmed">交易日 15:00 自动生成，也可手动重跑。</Text>
             </div>
             <ThemeIcon variant="light" color="teal"><Search size={18} /></ThemeIcon>
           </Group>
@@ -187,7 +187,7 @@ function OpportunityPageContent() {
             <div>
               <Text fw={900} size="lg">机会中枢</Text>
               <Text size="sm" c="dimmed">
-                {screen ? `${displayTradeDate(screen.trade_date)} 生成，报告写入本地 data/reports` : '运行盘后扫描后显示候选机会条。'}
+                {screen ? `${displayTradeDate(screen.trade_date)} 收盘策略报告，已保存到服务端` : '交易日 15:00 自动生成，完成后打开页面即可查看。'}
               </Text>
             </div>
             <Badge color={screen ? 'teal' : 'gray'} variant="light">{screen ? '候选机会' : '待扫描'}</Badge>

@@ -77,6 +77,16 @@ OUTPUT_COLUMNS = [
 
 ProgressCallback = Callable[[int, str], None]
 
+REQUIRED_SCREEN_FACTORS = (
+    "最新价",
+    "涨跌幅",
+    "成交额",
+    "换手率",
+    "量比",
+    "总市值",
+    "流通市值",
+)
+
 BOARD_LABELS = {
     "main": "主板",
     "startup": "创业板",
@@ -107,6 +117,8 @@ def run_screen(
     enrich: bool,
     exclude_boards: list[str] | None = None,
     progress: ProgressCallback | None = None,
+    include_trends: bool = True,
+    require_complete_factors: bool = False,
 ) -> ScreenRun:
     def report(percent: int, message: str) -> None:
         if progress:
@@ -123,6 +135,8 @@ def run_screen(
         report(12, "东财实时行情源暂不可用，已使用 AkShare 旧版全 A 快照并结合最近缓存估算市值继续扫描。")
     report(20, f"快照读取完成：{len(raw)} 只股票，开始标准化。")
     normalized = normalize_spot(raw)
+    if require_complete_factors:
+        validate_required_screen_factors(normalized)
     report(30, "应用价格、成交额、换手率和市值筛选。")
     filtered, board_excluded_count = apply_filters(normalized, config, excluded_board_codes)
     report(42, f"筛选完成：{len(filtered)} 只入围，开始评分排序。")
@@ -139,8 +153,12 @@ def run_screen(
     candidates = annotate_candidates_with_learning(config, candidates, records=learning_records)
     report(68, f"候选学习提示已生成：{len(candidates)} 只，开始补充候选详情。")
     candidates = enrich_candidates(candidates, provider, progress=progress) if enrich and not candidates.empty else candidates
-    report(70, f"拉取候选走势图：共 {len(candidates)} 只。")
-    candidates = attach_trend_points(candidates, provider, normalized_date, refresh=refresh, progress=progress)
+    if include_trends:
+        report(70, f"拉取候选走势图：共 {len(candidates)} 只。")
+        candidates = attach_trend_points(candidates, provider, normalized_date, refresh=refresh, progress=progress)
+    else:
+        report(70, "收盘自动任务跳过批量走势图，页面将按需加载。")
+        candidates["走势点位"] = [[] for _ in range(len(candidates))]
     if "行业" not in candidates.columns:
         candidates["行业"] = ""
     if "上市时间" not in candidates.columns:
@@ -162,6 +180,16 @@ def run_screen(
         candidates=candidates,
         report_paths=report_paths,
     )
+
+
+def validate_required_screen_factors(df: pd.DataFrame) -> None:
+    missing = [
+        column
+        for column in REQUIRED_SCREEN_FACTORS
+        if column not in df.columns or pd.to_numeric(df[column], errors="coerce").notna().sum() == 0
+    ]
+    if missing:
+        raise RuntimeError(f"全市场快照缺少量化筛选因子：{'、'.join(missing)}；本次不覆盖收盘报告")
 
 
 def normalize_spot(df: pd.DataFrame) -> pd.DataFrame:

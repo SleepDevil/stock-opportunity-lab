@@ -374,8 +374,8 @@ export function SettingsPage({
           <Group gap="sm" align="flex-start" wrap="nowrap">
             <ThemeIcon color="teal" variant="light" size="lg"><Bot size={19} /></ThemeIcon>
             <div>
-              <Text fw={900}>自选锐评群订阅</Text>
-              <Text size="sm" c="dimmed">在 Web 工作台维护自选、生成锐评，并以飞书 Card 2.0 推送到指定群聊。</Text>
+              <Text fw={900}>行情与选股群订阅</Text>
+              <Text size="sm" c="dimmed">自选锐评按时巡场；15:00 另行生成、保存量化选股报告并推送到同一群聊。</Text>
             </div>
           </Group>
           <Group gap="xs">
@@ -398,8 +398,8 @@ export function SettingsPage({
 
         <div className="watchlist-feishu-switch-row">
           <Switch
-            label="开启自选锐评飞书群推送"
-            description="由服务端 FaaS 在 A 股交易日的 10:00、11:30、14:00、15:00 自动触发；关闭 Web 页面也会继续运行。"
+            label="开启自选锐评与收盘选股飞书推送"
+            description="服务端 FaaS 在交易日 10:00、11:30、14:00、15:00 播报自选；15:00 同时落盘量化选股报告并推送第二张卡片。"
             checked={watchlistFeishuEnabled}
             onChange={(event) => setWatchlistFeishuEnabled(event.currentTarget.checked)}
           />
@@ -425,7 +425,7 @@ export function SettingsPage({
         </SimpleGrid>
 
         <div className="watchlist-feishu-flow" aria-label="锐评群推送流程">
-          <span>FaaS 定时巡场</span><i>→</i><span>完整分时 + AI 锐评</span><i>→</i><span>飞书群卡片</span><i>→</i><span>点击股票看走势</span>
+          <span>FaaS 定时巡场</span><i>→</i><span>自选锐评 + 15:00 量化选股</span><i>→</i><span>飞书群卡片</span><i>→</i><span>点击股票看详情</span>
         </div>
         <Text size="xs" c="dimmed" mt="xs">
           当前生成引擎：{aiConfigured ? aiModelLabel : '行情规则代笔'}。模型 API Key 仅从服务端环境变量读取，不会保存到页面或下发到浏览器。

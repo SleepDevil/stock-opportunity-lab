@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 
 from app.config import AppConfig
 from app.services.data_provider import normalize_stock_code
+from app.services.daily_screen_schedule import CloseSnapshotNotCurrentError, run_daily_close_screen
 from app.services.learning_store import connect, dump_json, execute, row_value, timestamp
 from app.services.notification_settings import load_notification_settings, normalize_user_email
 from app.services.notifications import send_feishu_card
@@ -320,8 +321,22 @@ def run_watchlist_timer(
             "current_time": current.isoformat(timespec="seconds"),
         }
     targets = commentary_targets(config)
+    close_screen_result: dict[str, Any] | None = None
+    if slot.label == "15:00":
+        try:
+            close_screen_result = run_daily_close_screen(config, slot, current)
+        except CloseSnapshotNotCurrentError as exc:
+            close_screen_result = {"status": "snapshot_not_current", "message": str(exc)}
+        except Exception as exc:
+            LOGGER.exception("Scheduled daily screen failed for %s", slot.trade_date)
+            close_screen_result = {"status": "failed", "message": str(exc)}
     if not targets:
-        return {"status": "no_enabled_watchlists", "slot": slot.key, "results": []}
+        return {
+            "status": "completed" if close_screen_result else "no_enabled_watchlists",
+            "slot": slot.key,
+            "screen_recommendation": close_screen_result,
+            "results": [],
+        }
 
     results: list[dict[str, Any]] = []
     for target in targets:
@@ -333,8 +348,14 @@ def run_watchlist_timer(
             LOGGER.exception("Scheduled watchlist commentary failed for %s", target.target_id)
             results.append({"target": target.target_id, "status": "failed", "message": str(exc)})
     statuses = {str(result.get("status")) for result in results}
-    status = "sent" if statuses == {"sent"} else "completed"
-    return {"status": status, "slot": slot.key, "results": results}
+    screen_failed = bool(close_screen_result and close_screen_result.get("status") in {"failed", "snapshot_not_current"})
+    status = "sent" if statuses == {"sent"} and not screen_failed else "completed"
+    return {
+        "status": status,
+        "slot": slot.key,
+        "screen_recommendation": close_screen_result,
+        "results": results,
+    }
 
 
 def run_target_commentary(

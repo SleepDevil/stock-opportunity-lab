@@ -30,7 +30,7 @@ export function CandidateTable({
     return (
       <div className="empty-state refined">
         <ShieldAlert size={20} />
-        <span>还没有候选股。盘后运行一次扫描，机会条会在这里出现。</span>
+        <span>还没有候选股。交易日 15:00 会自动生成，也可以手动运行盘后扫描。</span>
       </div>
     );
   }

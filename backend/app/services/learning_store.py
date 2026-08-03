@@ -113,6 +113,30 @@ SCHEMA = [
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_wechat_articles_source ON wechat_articles(source_name)",
+    """
+    CREATE TABLE IF NOT EXISTS screen_report_snapshots (
+        trade_date TEXT PRIMARY KEY,
+        generation_source TEXT NOT NULL,
+        generated_at TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_screen_report_snapshots_generated_at ON screen_report_snapshots(generated_at)",
+    """
+    CREATE TABLE IF NOT EXISTS daily_screen_deliveries (
+        idempotency_key TEXT PRIMARY KEY,
+        trade_date TEXT NOT NULL,
+        chat_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 1,
+        message TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_daily_screen_deliveries_date ON daily_screen_deliveries(trade_date)",
 ]
 POSTGRES_TIMEOUT_SECONDS = 3
 _SCHEMA_READY_KEYS: set[str] = set()
@@ -251,6 +275,26 @@ def get_watchlist_commentary_subscription(config: AppConfig, user_email: str) ->
         "created_at": str(row_value(row, "created_at") or ""),
         "updated_at": str(row_value(row, "updated_at") or ""),
     }
+
+
+def list_watchlist_commentary_subscriptions(config: AppConfig) -> list[dict[str, Any]]:
+    ensure_schema(config)
+    with connect(config) as conn:
+        rows = execute(
+            conn,
+            "SELECT * FROM watchlist_commentary_subscriptions ORDER BY updated_at, user_email",
+        ).fetchall()
+    return [
+        {
+            "user_email": str(row_value(row, "user_email") or ""),
+            "enabled": bool(row_value(row, "enabled")),
+            "feishu_chat_id": row_value(row, "feishu_chat_id") or None,
+            "platform_url": row_value(row, "platform_url") or None,
+            "created_at": str(row_value(row, "created_at") or ""),
+            "updated_at": str(row_value(row, "updated_at") or ""),
+        }
+        for row in rows
+    ]
 
 
 def save_watchlist_commentary_subscription(
