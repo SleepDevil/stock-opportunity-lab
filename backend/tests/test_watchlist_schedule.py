@@ -91,6 +91,33 @@ def test_storage_health_initializes_sqlite_tables(tmp_path, monkeypatch) -> None
     }
 
 
+def test_manual_screen_report_push_requires_auth_and_runs_close_report(tmp_path, monkeypatch) -> None:
+    config = AppConfig(data_dir=tmp_path, database_url=None, client_auth_secret="client-secret")
+    monkeypatch.setattr(main, "CONFIG", config)
+    monkeypatch.setattr(watchlist_router, "CONFIG", config)
+    calls: list[AppConfig] = []
+    monkeypatch.setattr(
+        watchlist_router,
+        "run_manual_daily_close_screen",
+        lambda received: calls.append(received) or {
+            "status": "completed",
+            "trade_date": "20260804",
+            "generation": "generated",
+            "deliveries": [{"status": "sent"}],
+        },
+    )
+    client = TestClient(main.app)
+
+    rejected = client.post("/api/screen-report/manual-push")
+    accepted = client.post("/api/screen-report/manual-push", headers=signed_headers(client))
+
+    assert rejected.status_code == 403
+    assert accepted.status_code == 200
+    assert accepted.json()["generation"] == "generated"
+    assert accepted.json()["deliveries"] == [{"status": "sent"}]
+    assert calls == [config]
+
+
 @pytest.mark.parametrize(
     ("error", "expected"),
     [

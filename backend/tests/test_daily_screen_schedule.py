@@ -148,6 +148,49 @@ def test_close_screen_still_persists_without_notification_target(tmp_path, monke
     assert list_screen_report_snapshot_dates(config) == ["20260803"]
 
 
+def test_manual_close_screen_accepts_completed_snapshot_after_freshness_window(tmp_path, monkeypatch) -> None:
+    config = AppConfig(data_dir=tmp_path, database_url=None)
+    now = datetime.fromisoformat("2026-08-03T19:30:00+08:00")
+    monkeypatch.setattr(
+        daily_screen_schedule,
+        "load_market_index",
+        lambda **_kwargs: {
+            "trade_date": "20260803",
+            "updated_at": "2026-08-03T16:12:00+08:00",
+            "points": [{"time": "2026-08-03 15:00", "price": 3800.0}],
+        },
+    )
+
+    def fake_generate(**kwargs):
+        payload = report_payload()
+        save_screen_report_snapshot(
+            config,
+            payload,
+            generation_source=kwargs["generation_source"],
+            generated_at=kwargs["generated_at"],
+        )
+        return ScreenResponse(**payload)
+
+    monkeypatch.setattr(daily_screen_schedule, "generate_screen_response", fake_generate)
+
+    result = daily_screen_schedule.run_manual_daily_close_screen(config, now=now, targets=[])
+
+    assert result and result["status"] == "completed"
+    assert result["generation"] == "generated"
+    assert load_screen_report_snapshot(config, "20260803") is not None
+
+
+def test_manual_close_screen_rejects_before_close(tmp_path) -> None:
+    config = AppConfig(data_dir=tmp_path, database_url=None)
+
+    with pytest.raises(daily_screen_schedule.CloseSnapshotNotCurrentError, match="尚未收盘"):
+        daily_screen_schedule.run_manual_daily_close_screen(
+            config,
+            now=datetime.fromisoformat("2026-08-03T14:59:59+08:00"),
+            targets=[],
+        )
+
+
 def test_non_close_slot_does_not_read_or_generate(tmp_path, monkeypatch) -> None:
     config = AppConfig(data_dir=tmp_path, database_url=None)
     monkeypatch.setattr(

@@ -50,6 +50,12 @@ class ConfiguredScreenDeliveryTarget:
     platform_url: str
 
 
+@dataclass(frozen=True)
+class ManualCloseSlot:
+    trade_date: str
+    label: str = CLOSE_SLOT_LABEL
+
+
 def run_daily_close_screen(
     config: AppConfig,
     slot: CloseSlot,
@@ -57,6 +63,7 @@ def run_daily_close_screen(
     *,
     targets: list[ScreenDeliveryTarget] | None = None,
     market_provider: MarketDataProvider | None = None,
+    allow_completed_close_snapshot: bool = False,
 ) -> dict[str, Any] | None:
     if slot.label != CLOSE_SLOT_LABEL:
         return None
@@ -69,7 +76,12 @@ def run_daily_close_screen(
         generation_status = "reused"
     else:
         market = load_market_index(refresh=True)
-        validate_close_market_snapshot(market, slot.trade_date, now)
+        validate_close_market_snapshot(
+            market,
+            slot.trade_date,
+            now,
+            allow_completed_close_snapshot=allow_completed_close_snapshot,
+        )
         report = generate_screen_response(
             provider=market_provider or AkShareProvider(config),
             config=config,
@@ -96,6 +108,29 @@ def run_daily_close_screen(
         "filtered_count": int(report.get("filtered_count") or 0),
         "deliveries": deliveries,
     }
+
+
+def run_manual_daily_close_screen(
+    config: AppConfig,
+    *,
+    now: datetime | None = None,
+    targets: list[ScreenDeliveryTarget] | None = None,
+    market_provider: MarketDataProvider | None = None,
+) -> dict[str, Any] | None:
+    current = (now or datetime.now(SHANGHAI_TZ)).astimezone(SHANGHAI_TZ)
+    if current.weekday() >= 5:
+        raise CloseSnapshotNotCurrentError("非工作日不生成收盘量化选股")
+    if (current.hour, current.minute) < (15, 0):
+        raise CloseSnapshotNotCurrentError("尚未收盘，不能手动生成收盘量化选股")
+    slot = ManualCloseSlot(trade_date=current.strftime("%Y%m%d"))
+    return run_daily_close_screen(
+        config,
+        slot,
+        current,
+        targets=targets,
+        market_provider=market_provider,
+        allow_completed_close_snapshot=True,
+    )
 
 
 def deliver_screen_report(
@@ -175,14 +210,33 @@ def configured_screen_delivery_targets(config: AppConfig) -> list[ConfiguredScre
     ]
 
 
-def validate_close_market_snapshot(market: dict[str, Any], trade_date: str, now: datetime) -> None:
+def validate_close_market_snapshot(
+    market: dict[str, Any],
+    trade_date: str,
+    now: datetime,
+    *,
+    allow_completed_close_snapshot: bool = False,
+) -> None:
     snapshot_date = str(market.get("trade_date") or "").replace("-", "")
     updated_at = parse_datetime(market.get("updated_at"))
     if snapshot_date != trade_date or not updated_at or updated_at.strftime("%Y%m%d") != trade_date:
         raise CloseSnapshotNotCurrentError("指数行情不是当前交易日，跳过收盘量化选股")
     age = now.astimezone(SHANGHAI_TZ) - updated_at.astimezone(SHANGHAI_TZ)
     if age < timedelta(minutes=-2) or age > MARKET_FRESHNESS_LIMIT:
+        if allow_completed_close_snapshot and has_completed_close_point(market, trade_date):
+            return
         raise CloseSnapshotNotCurrentError("指数行情更新时间超出可接受范围，跳过收盘量化选股")
+
+
+def has_completed_close_point(market: dict[str, Any], trade_date: str) -> bool:
+    for point in reversed(market.get("points") or []):
+        if not isinstance(point, dict):
+            continue
+        point_time = parse_datetime(point.get("time"))
+        if not point_time or point_time.astimezone(SHANGHAI_TZ).strftime("%Y%m%d") != trade_date:
+            continue
+        return (point_time.hour, point_time.minute) >= (15, 0)
+    return False
 
 
 def parse_datetime(value: Any) -> datetime | None:

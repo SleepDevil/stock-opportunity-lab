@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 from app.config import CONFIG
 from app.services.client_auth import ClientAuthError, require_client_auth
+from app.services.daily_screen_schedule import run_manual_daily_close_screen
 from app.services.learning_store import ensure_schema
 from app.services.watchlist_schedule import (
     MAX_WATCHLIST_STOCKS,
@@ -119,6 +120,18 @@ def classify_storage_error(exc: Exception) -> str:
     if "permission" in message or "not authorized" in message or "insufficientprivilege" in message:
         return "permission_denied"
     return "database_initialization_failed"
+
+
+@router.post(
+    "/api/screen-report/manual-push",
+    dependencies=[Depends(require_web_client)],
+)
+def manual_push_screen_report() -> dict[str, Any]:
+    try:
+        result = run_manual_daily_close_screen(CONFIG)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return result or {"status": "skipped"}
 
 
 @router.post("/", include_in_schema=False)
