@@ -74,6 +74,37 @@ def test_server_watchlist_requires_frontend_auth(tmp_path, monkeypatch) -> None:
     assert response.status_code == 403
 
 
+def test_storage_health_initializes_sqlite_tables(tmp_path, monkeypatch) -> None:
+    config = AppConfig(data_dir=tmp_path, database_url=None, client_auth_secret="client-secret")
+    monkeypatch.setattr(main, "CONFIG", config)
+    monkeypatch.setattr(watchlist_router, "CONFIG", config)
+    client = TestClient(main.app)
+
+    response = client.get("/api/watchlist/storage-health", headers=signed_headers(client))
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "backend": "sqlite",
+        "error_code": None,
+        "error_type": None,
+    }
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (RuntimeError("请确认运行环境已注入 SEC_TOKEN_PATH"), "service_identity_missing"),
+        (RuntimeError("Postgres DATABASE_URL requires the psycopg package"), "postgres_driver_missing"),
+        (TimeoutError("connection timed out"), "connection_timeout"),
+        (RuntimeError("authentication failed"), "authentication_failed"),
+        (PermissionError("permission denied"), "permission_denied"),
+    ],
+)
+def test_storage_error_classification(error, expected) -> None:
+    assert watchlist_router.classify_storage_error(error) == expected
+
+
 def test_scheduled_slot_only_allows_four_daily_windows() -> None:
     assert watchlist_schedule.scheduled_slot(datetime.fromisoformat("2026-07-31T10:00:00+08:00")).key == "20260731-1000"
     assert watchlist_schedule.scheduled_slot(datetime.fromisoformat("2026-07-31T11:30:30+08:00")).key == "20260731-1130"

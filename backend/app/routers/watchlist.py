@@ -7,8 +7,10 @@ from pydantic import BaseModel, Field
 
 from app.config import CONFIG
 from app.services.client_auth import ClientAuthError, require_client_auth
+from app.services.learning_store import ensure_schema
 from app.services.watchlist_schedule import (
     MAX_WATCHLIST_STOCKS,
+    ensure_watchlist_schema,
     get_server_watchlist,
     run_watchlist_timer,
     save_server_watchlist,
@@ -34,6 +36,13 @@ class ServerWatchlistResponse(BaseModel):
 class ServerWatchlistUpdate(BaseModel):
     user_email: str = Field(min_length=3, max_length=254)
     stocks: list[ServerWatchlistStock] = Field(default_factory=list, max_length=MAX_WATCHLIST_STOCKS)
+
+
+class StorageHealthResponse(BaseModel):
+    ok: bool
+    backend: Literal["sqlite", "postgresql"]
+    error_code: str | None = None
+    error_type: str | None = None
 
 
 def require_web_client(request: Request) -> None:
@@ -71,6 +80,45 @@ def put_watchlist(request: ServerWatchlistUpdate) -> ServerWatchlistResponse:
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get(
+    "/api/watchlist/storage-health",
+    response_model=StorageHealthResponse,
+    dependencies=[Depends(require_web_client)],
+)
+def get_watchlist_storage_health() -> StorageHealthResponse:
+    backend = (
+        "postgresql"
+        if (CONFIG.database_url or "").startswith(("postgresql://", "postgres://"))
+        else "sqlite"
+    )
+    try:
+        ensure_schema(CONFIG)
+        ensure_watchlist_schema(CONFIG)
+    except Exception as exc:
+        return StorageHealthResponse(
+            ok=False,
+            backend=backend,
+            error_code=classify_storage_error(exc),
+            error_type=exc.__class__.__name__,
+        )
+    return StorageHealthResponse(ok=True, backend=backend)
+
+
+def classify_storage_error(exc: Exception) -> str:
+    message = f"{exc.__class__.__name__}: {exc}".lower()
+    if "sec_token_path" in message or "服务身份令牌" in message:
+        return "service_identity_missing"
+    if "psycopg package" in message:
+        return "postgres_driver_missing"
+    if "timeout" in message or "timed out" in message or "network is unreachable" in message:
+        return "connection_timeout"
+    if "authentication" in message or "password" in message or "token" in message:
+        return "authentication_failed"
+    if "permission" in message or "not authorized" in message or "insufficientprivilege" in message:
+        return "permission_denied"
+    return "database_initialization_failed"
 
 
 @router.post("/", include_in_schema=False)
