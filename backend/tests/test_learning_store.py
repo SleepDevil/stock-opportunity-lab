@@ -21,6 +21,8 @@ def test_resolve_aidap_database_url_injects_runtime_token(monkeypatch) -> None:
     options = parse_qs(urlsplit(resolved).query)["options"][0]
 
     assert "${Token}" not in resolved
+    assert "+" not in urlsplit(resolved).query
+    assert "%20" in urlsplit(resolved).query
     assert options == "bytepg_compute_id=compute-123 bytepg_auth_token=header.payload.signature"
 
 

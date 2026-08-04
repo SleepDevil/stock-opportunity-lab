@@ -9,7 +9,7 @@ from pathlib import Path
 import sqlite3
 from threading import Lock
 from typing import Any, Iterator
-from urllib.parse import parse_qsl, unquote, urlencode, urlparse, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, quote, unquote, urlencode, urlparse, urlsplit, urlunsplit
 
 from app.config import AppConfig
 
@@ -170,7 +170,8 @@ def resolve_aidap_database_url(url: str) -> str:
         (key, value.replace(AIDAP_TOKEN_PLACEHOLDER, token))
         for key, value in query
     ]
-    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, urlencode(resolved_query), parsed.fragment))
+    encoded_query = urlencode(resolved_query, quote_via=quote)
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, encoded_query, parsed.fragment))
 
 
 def load_aidap_token() -> str:
