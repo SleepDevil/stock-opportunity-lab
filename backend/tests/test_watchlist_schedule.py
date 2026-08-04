@@ -118,6 +118,27 @@ def test_scheduled_slot_only_allows_four_daily_windows() -> None:
     assert watchlist_schedule.scheduled_slot(datetime.fromisoformat("2026-08-01T10:00:00+08:00")) is None
 
 
+def test_screen_retry_slot_only_allows_two_close_retry_windows() -> None:
+    first = watchlist_schedule.scheduled_screen_retry_slot(
+        datetime.fromisoformat("2026-07-31T15:05:30+08:00")
+    )
+    second = watchlist_schedule.scheduled_screen_retry_slot(
+        datetime.fromisoformat("2026-07-31T15:11:59+08:00")
+    )
+
+    assert first is not None
+    assert first.label == "15:00"
+    assert first.key == "20260731-screen-retry-1505"
+    assert second is not None
+    assert second.key == "20260731-screen-retry-1510"
+    assert watchlist_schedule.scheduled_screen_retry_slot(
+        datetime.fromisoformat("2026-07-31T15:04:59+08:00")
+    ) is None
+    assert watchlist_schedule.scheduled_screen_retry_slot(
+        datetime.fromisoformat("2026-07-31T15:12:00+08:00")
+    ) is None
+
+
 def test_outside_schedule_does_not_load_persisted_targets(tmp_path, monkeypatch) -> None:
     config = AppConfig(data_dir=tmp_path, database_url=None)
     monkeypatch.setattr(
@@ -158,6 +179,108 @@ def test_close_slot_runs_daily_screen_even_without_watchlist_targets(tmp_path, m
     assert result["status"] == "completed"
     assert result["screen_recommendation"]["generation"] == "generated"
     assert result["results"] == []
+
+
+def test_close_slot_sends_commentary_before_attempting_daily_screen(tmp_path, monkeypatch) -> None:
+    config = AppConfig(data_dir=tmp_path, database_url=None)
+    target = watchlist_schedule.CommentaryTarget(
+        target_id="trader@example.com",
+        user_email="trader@example.com",
+        chat_id="oc_abcdefgh12345678",
+        platform_url="https://stock.example.com",
+        stocks=DEFAULT_STOCKS,
+    )
+    calls: list[str] = []
+    monkeypatch.setattr(watchlist_schedule, "commentary_targets", lambda *_args, **_kwargs: [target])
+    monkeypatch.setattr(
+        watchlist_schedule,
+        "run_target_commentary",
+        lambda *_args, **_kwargs: calls.append("commentary") or {
+            "target": target.target_id,
+            "status": "sent",
+        },
+    )
+    monkeypatch.setattr(
+        watchlist_schedule,
+        "run_daily_close_screen",
+        lambda *_args, **_kwargs: calls.append("screen") or {
+            "status": "completed",
+            "generation": "generated",
+        },
+    )
+
+    result = watchlist_schedule.run_watchlist_timer(
+        config,
+        now=datetime.fromisoformat("2026-07-31T15:00:20+08:00"),
+    )
+
+    assert calls == ["commentary", "screen"]
+    assert result["status"] == "sent"
+    assert result["screen_recommendation"]["generation"] == "generated"
+
+
+def test_screen_retry_task_only_runs_daily_screen(tmp_path, monkeypatch) -> None:
+    config = AppConfig(data_dir=tmp_path, database_url=None)
+    calls: list[str] = []
+    monkeypatch.setattr(
+        watchlist_schedule,
+        "commentary_targets",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("screen retry must not load or generate commentary")
+        ),
+    )
+    monkeypatch.setattr(
+        watchlist_schedule,
+        "run_target_commentary",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("screen retry must not generate commentary")
+        ),
+    )
+    monkeypatch.setattr(
+        watchlist_schedule,
+        "run_daily_close_screen",
+        lambda _config, slot, _now: calls.append(slot.key) or {
+            "status": "completed",
+            "trade_date": slot.trade_date,
+            "generation": "reused",
+            "deliveries": [{"status": "deduplicated"}],
+        },
+    )
+
+    result = watchlist_schedule.run_watchlist_timer(
+        config,
+        now=datetime.fromisoformat("2026-07-31T15:05:20+08:00"),
+        task=watchlist_schedule.DAILY_SCREEN_RETRY_TASK,
+    )
+
+    assert calls == ["20260731-screen-retry-1505"]
+    assert result["status"] == "completed"
+    assert result["task"] == watchlist_schedule.DAILY_SCREEN_RETRY_TASK
+    assert result["screen_recommendation"]["generation"] == "reused"
+    assert result["results"] == []
+
+
+def test_screen_retry_task_outside_window_does_not_access_storage(tmp_path, monkeypatch) -> None:
+    config = AppConfig(data_dir=tmp_path, database_url=None)
+    monkeypatch.setattr(
+        watchlist_schedule,
+        "commentary_targets",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("must not access commentary")),
+    )
+    monkeypatch.setattr(
+        watchlist_schedule,
+        "run_daily_close_screen",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("must not run report")),
+    )
+
+    result = watchlist_schedule.run_watchlist_timer(
+        config,
+        now=datetime.fromisoformat("2026-07-31T15:08:00+08:00"),
+        task=watchlist_schedule.DAILY_SCREEN_RETRY_TASK,
+    )
+
+    assert result["status"] == "outside_schedule"
+    assert result["task"] == watchlist_schedule.DAILY_SCREEN_RETRY_TASK
 
 
 def test_timer_endpoint_requires_matching_faas_timer_name(tmp_path, monkeypatch) -> None:
@@ -201,6 +324,18 @@ def test_timer_endpoint_requires_matching_faas_timer_name(tmp_path, monkeypatch)
         "/",
         json={"timer_name": "private-timer-name", "dry_run": True},
     )
+    accepted_report_retry = client.post(
+        "/",
+        json={
+            "timer_name": "private-timer-name",
+            "task": watchlist_schedule.DAILY_SCREEN_RETRY_TASK,
+            "dry_run": True,
+        },
+    )
+    rejected_unknown_task = client.post(
+        "/",
+        json={"timer_name": "private-timer-name", "task": "unknown", "dry_run": True},
+    )
 
     assert rejected.status_code == 403
     assert rejected_faas_event.status_code == 403
@@ -212,6 +347,10 @@ def test_timer_endpoint_requires_matching_faas_timer_name(tmp_path, monkeypatch)
     assert accepted_faas_event.json()["status"] == "dry_run"
     assert accepted_http_runtime_payload.status_code == 200
     assert accepted_http_runtime_payload.json()["status"] == "dry_run"
+    assert accepted_report_retry.status_code == 200
+    assert accepted_report_retry.json()["task"] == watchlist_schedule.DAILY_SCREEN_RETRY_TASK
+    assert accepted_report_retry.json()["commentary_enabled"] is False
+    assert rejected_unknown_task.status_code == 403
 
 
 def test_scheduled_delivery_uses_real_snapshot_and_deduplicates(tmp_path, monkeypatch) -> None:

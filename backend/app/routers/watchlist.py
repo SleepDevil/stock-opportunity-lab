@@ -133,4 +133,8 @@ async def faas_timer_entrypoint(request: Request) -> dict[str, Any]:
         event_data = validate_timer_event(event)
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
-    return run_watchlist_timer(CONFIG, dry_run=bool(event_data.get("dry_run")))
+    return run_watchlist_timer(
+        CONFIG,
+        dry_run=bool(event_data.get("dry_run")),
+        task=str(event_data.get("task") or ""),
+    )

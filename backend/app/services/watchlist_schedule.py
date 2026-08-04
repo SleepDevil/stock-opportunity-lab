@@ -29,6 +29,7 @@ MAX_WATCHLIST_STOCKS = 8
 DEFAULT_TARGET_ID = "__deployment_default__"
 DEFAULT_WATCHLIST_ENV = "STOCK_LAB_WATCHLIST_COMMENTARY_DEFAULT_WATCHLIST"
 TIMER_NAME_ENV = "STOCK_LAB_WATCHLIST_COMMENTARY_TIMER_NAME"
+DAILY_SCREEN_RETRY_TASK = "daily_screen_retry"
 SLOT_TRIGGER_GRACE = timedelta(minutes=2)
 PROCESSING_STALE_AFTER = timedelta(minutes=4)
 MARKET_FRESHNESS_LIMIT = timedelta(minutes=20)
@@ -37,6 +38,10 @@ SCHEDULED_SLOT_TIMES = (
     clock_time(11, 30),
     clock_time(14, 0),
     clock_time(15, 0),
+)
+DAILY_SCREEN_RETRY_TIMES = (
+    clock_time(15, 5),
+    clock_time(15, 10),
 )
 _STOCK_CODE_RE = re.compile(r"^\d{6}$")
 _SCHEMA_READY: set[str] = set()
@@ -262,6 +267,23 @@ def scheduled_slot(now: datetime | None = None) -> ScheduledSlot | None:
     return latest
 
 
+def scheduled_screen_retry_slot(now: datetime | None = None) -> ScheduledSlot | None:
+    current = (now or datetime.now(SHANGHAI_TZ)).astimezone(SHANGHAI_TZ)
+    if current.weekday() >= 5:
+        return None
+    for retry_time in DAILY_SCREEN_RETRY_TIMES:
+        due_at = datetime.combine(current.date(), retry_time, tzinfo=SHANGHAI_TZ)
+        delay = current - due_at
+        if timedelta(0) <= delay < SLOT_TRIGGER_GRACE:
+            return ScheduledSlot(
+                trade_date=due_at.strftime("%Y%m%d"),
+                label="15:00",
+                key=f"{due_at.strftime('%Y%m%d')}-screen-retry-{due_at.strftime('%H%M')}",
+                due_at=due_at,
+            )
+    return None
+
+
 def parse_event_data(event: dict[str, Any]) -> dict[str, Any]:
     data = event.get("data")
     if isinstance(data, dict):
@@ -295,7 +317,25 @@ def validate_timer_event(event: dict[str, Any]) -> dict[str, Any]:
         raise PermissionError("拒绝非 FaaS 定时器调用")
     if not hmac.compare_digest(timer_name, expected):
         raise PermissionError("拒绝非 FaaS 定时器调用")
+    task = str(event_data.get("task") or "").strip()
+    if task not in {"", DAILY_SCREEN_RETRY_TASK}:
+        raise PermissionError("拒绝未知的 FaaS 定时任务")
     return event_data
+
+
+def run_close_screen_safely(
+    config: AppConfig,
+    slot: ScheduledSlot,
+    now: datetime,
+) -> dict[str, Any]:
+    try:
+        result = run_daily_close_screen(config, slot, now)
+        return result or {"status": "skipped"}
+    except CloseSnapshotNotCurrentError as exc:
+        return {"status": "snapshot_not_current", "message": str(exc)}
+    except Exception as exc:
+        LOGGER.exception("Scheduled daily screen failed for %s", slot.trade_date)
+        return {"status": "failed", "message": str(exc)}
 
 
 def run_watchlist_timer(
@@ -303,8 +343,37 @@ def run_watchlist_timer(
     *,
     now: datetime | None = None,
     dry_run: bool = False,
+    task: str | None = None,
 ) -> dict[str, Any]:
     current = (now or datetime.now(SHANGHAI_TZ)).astimezone(SHANGHAI_TZ)
+    normalized_task = str(task or "").strip()
+    if normalized_task not in {"", DAILY_SCREEN_RETRY_TASK}:
+        raise ValueError("不支持的定时任务")
+
+    if normalized_task == DAILY_SCREEN_RETRY_TASK:
+        retry_slot = scheduled_screen_retry_slot(current)
+        if dry_run:
+            return {
+                "status": "dry_run",
+                "task": DAILY_SCREEN_RETRY_TASK,
+                "current_time": current.isoformat(timespec="seconds"),
+                "slot": retry_slot.key if retry_slot else None,
+                "commentary_enabled": False,
+            }
+        if not retry_slot:
+            return {
+                "status": "outside_schedule",
+                "task": DAILY_SCREEN_RETRY_TASK,
+                "current_time": current.isoformat(timespec="seconds"),
+            }
+        return {
+            "status": "completed",
+            "task": DAILY_SCREEN_RETRY_TASK,
+            "slot": retry_slot.key,
+            "screen_recommendation": run_close_screen_safely(config, retry_slot, current),
+            "results": [],
+        }
+
     slot = scheduled_slot(current)
     if dry_run:
         targets = commentary_targets(config)
@@ -321,23 +390,6 @@ def run_watchlist_timer(
             "current_time": current.isoformat(timespec="seconds"),
         }
     targets = commentary_targets(config)
-    close_screen_result: dict[str, Any] | None = None
-    if slot.label == "15:00":
-        try:
-            close_screen_result = run_daily_close_screen(config, slot, current)
-        except CloseSnapshotNotCurrentError as exc:
-            close_screen_result = {"status": "snapshot_not_current", "message": str(exc)}
-        except Exception as exc:
-            LOGGER.exception("Scheduled daily screen failed for %s", slot.trade_date)
-            close_screen_result = {"status": "failed", "message": str(exc)}
-    if not targets:
-        return {
-            "status": "completed" if close_screen_result else "no_enabled_watchlists",
-            "slot": slot.key,
-            "screen_recommendation": close_screen_result,
-            "results": [],
-        }
-
     results: list[dict[str, Any]] = []
     for target in targets:
         try:
@@ -347,6 +399,21 @@ def run_watchlist_timer(
         except Exception as exc:
             LOGGER.exception("Scheduled watchlist commentary failed for %s", target.target_id)
             results.append({"target": target.target_id, "status": "failed", "message": str(exc)})
+
+    # The close report is deliberately attempted after commentary. Its upstream
+    # snapshot can be slower or temporarily unavailable, and must never delay the
+    # independently useful watchlist card.
+    close_screen_result: dict[str, Any] | None = None
+    if slot.label == "15:00":
+        close_screen_result = run_close_screen_safely(config, slot, current)
+
+    if not targets:
+        return {
+            "status": "completed" if close_screen_result else "no_enabled_watchlists",
+            "slot": slot.key,
+            "screen_recommendation": close_screen_result,
+            "results": [],
+        }
     statuses = {str(result.get("status")) for result in results}
     screen_failed = bool(close_screen_result and close_screen_result.get("status") in {"failed", "snapshot_not_current"})
     status = "sent" if statuses == {"sent"} and not screen_failed else "completed"

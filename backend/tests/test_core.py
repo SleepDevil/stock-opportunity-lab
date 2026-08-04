@@ -3370,7 +3370,11 @@ def test_today_spot_refresh_falls_back_to_same_day_cache_when_upstreams_fail(tmp
     assert "Both EastMoney" in frame.attrs["stock_lab_cache_fallback_reason"]
 
 
-def test_today_spot_refresh_uses_legacy_akshare_snapshot_when_primary_upstreams_fail(tmp_path: Path, monkeypatch) -> None:
+def test_today_spot_refresh_uses_legacy_akshare_snapshot_when_primary_upstreams_fail(
+    tmp_path: Path,
+    monkeypatch,
+    caplog,
+) -> None:
     today = date.today().strftime("%Y%m%d")
     config = AppConfig(data_dir=tmp_path, screen=ScreenConfig(max_candidates=5))
     provider = AkShareProvider(config)
@@ -3444,6 +3448,9 @@ def test_today_spot_refresh_uses_legacy_akshare_snapshot_when_primary_upstreams_
     assert row["量比"] == 1.5
     assert frame.attrs["stock_lab_legacy_spot_fallback"] is True
     assert (config.raw_dir / f"spot_{today}.csv").exists()
+    assert "primary=ConnectionError: EastMoney closed" in caplog.text
+    assert "secondary=ConnectionError: Remote end closed connection without response" in caplog.text
+    assert "cached_references=1" in caplog.text
 
 
 def test_screen_refresh_continues_with_same_day_cache_when_spot_upstreams_fail(tmp_path: Path, monkeypatch) -> None:

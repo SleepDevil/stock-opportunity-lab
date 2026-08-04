@@ -5,6 +5,7 @@ from datetime import date, datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import contextlib
 import io
+import logging
 import math
 from pathlib import Path
 import time
@@ -14,6 +15,18 @@ import pandas as pd
 
 from app.config import AppConfig
 from app.utils import normalize_trade_date
+
+
+LOGGER = logging.getLogger("stock_lab.data_provider")
+
+
+def describe_upstream_error(error: Exception | None, max_length: int = 320) -> str:
+    if error is None:
+        return "unknown"
+    text = " ".join(str(error).split())
+    if len(text) > max_length:
+        text = f"{text[: max_length - 3]}..."
+    return f"{error.__class__.__name__}: {text}"
 
 
 class MarketDataProvider(Protocol):
@@ -74,10 +87,10 @@ class AkShareProvider:
             df.to_csv(cache, index=False, encoding="utf-8-sig")
             self._spot_memory[normalized] = df
             return df.copy()
-        live_error: Exception | None = None
         try:
             df = eastmoney_spot_via_curl_cffi()
         except Exception as fallback_error:
+            primary_error = fallback_error
             last_error: Exception | None = fallback_error
             for attempt in range(3):
                 try:
@@ -90,6 +103,15 @@ class AkShareProvider:
                 try:
                     df = self.legacy_spot_snapshot(normalized)
                     if not df.empty:
+                        reference_dates = available_spot_snapshot_dates(self.config.raw_dir)
+                        LOGGER.warning(
+                            "Full-market snapshot degraded to legacy source for %s; "
+                            "primary=%s; secondary=%s; cached_references=%d",
+                            normalized,
+                            describe_upstream_error(primary_error),
+                            describe_upstream_error(last_error),
+                            len(reference_dates),
+                        )
                         df.to_csv(cache, index=False, encoding="utf-8-sig")
                         df.attrs["stock_lab_legacy_spot_fallback"] = True
                         df.attrs["stock_lab_legacy_spot_fallback_reason"] = (
