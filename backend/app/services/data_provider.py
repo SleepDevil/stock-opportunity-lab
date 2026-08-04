@@ -87,14 +87,17 @@ class AkShareProvider:
             df.to_csv(cache, index=False, encoding="utf-8-sig")
             self._spot_memory[normalized] = df
             return df.copy()
+        source = "eastmoney_curl_cffi"
         try:
             df = eastmoney_spot_via_curl_cffi()
+            source = str(df.attrs.get("stock_lab_source") or source)
         except Exception as fallback_error:
             primary_error = fallback_error
             last_error: Exception | None = fallback_error
             for attempt in range(3):
                 try:
                     df = self._ak().stock_zh_a_spot_em()
+                    source = "akshare_eastmoney_spot"
                     break
                 except Exception as exc:  # AkShare upstreams occasionally close the socket.
                     last_error = exc
@@ -114,6 +117,7 @@ class AkShareProvider:
                         )
                         df.to_csv(cache, index=False, encoding="utf-8-sig")
                         df.attrs["stock_lab_legacy_spot_fallback"] = True
+                        df.attrs["stock_lab_source"] = "akshare_legacy_spot"
                         df.attrs["stock_lab_legacy_spot_fallback_reason"] = (
                             "EastMoney full-market snapshot failed; used ak.stock_zh_a_spot with cached fundamentals."
                         )
@@ -129,11 +133,13 @@ class AkShareProvider:
                 if stale is None:
                     raise live_error from last_error
                 stale.attrs["stock_lab_cache_fallback"] = True
+                stale.attrs["stock_lab_source"] = "local_file_cache"
                 stale.attrs["stock_lab_cache_fallback_reason"] = str(live_error)
                 self._spot_memory[normalized] = stale
                 return stale.copy()
         df.to_csv(cache, index=False, encoding="utf-8-sig")
         df.attrs["stock_lab_live_refresh"] = True
+        df.attrs["stock_lab_source"] = source
         self._spot_memory[normalized] = df
         return df.copy()
 
@@ -1033,24 +1039,26 @@ def eastmoney_history_via_curl_cffi(
 def fetch_eastmoney_history(requests_module: Any, params: dict[str, Any]) -> dict[str, Any]:
     base_urls = [
         "https://push2his.eastmoney.com/api/qt/stock/kline/get",
-        "http://push2his.eastmoney.com/api/qt/stock/kline/get",
+        "https://push2his.eastmoney.com/api/qt/stock/kline/get",
         "https://push2.eastmoney.com/api/qt/stock/kline/get",
     ]
     impersonates = ["chrome120", "chrome110", "safari17_0"]
     last_error: Exception | None = None
     for attempt in range(3):
         try:
-            response = requests_module.get(
-                base_urls[attempt % len(base_urls)],
-                params=params,
-                headers={
+            request_options = {
+                "params": params,
+                "headers": {
                     "Accept": "application/json,text/plain,*/*",
                     "Referer": "https://quote.eastmoney.com/",
                     "User-Agent": "Mozilla/5.0",
                 },
-                impersonate=impersonates[attempt % len(impersonates)],
-                timeout=6,
-            )
+                "impersonate": impersonates[attempt % len(impersonates)],
+                "timeout": 6,
+            }
+            if attempt == 0:
+                request_options.update(prefer_ipv6_curl_options())
+            response = requests_module.get(base_urls[attempt % len(base_urls)], **request_options)
             response.raise_for_status()
             return response.json()
         except Exception as exc:
@@ -1156,16 +1164,30 @@ def eastmoney_spot_via_curl_cffi() -> pd.DataFrame:
             "AkShare failed and curl_cffi fallback is unavailable. Run `npm run setup`."
         ) from exc
 
-    base_url = "https://push2.eastmoney.com/api/qt/clist/get"
+    base_urls = [
+        "https://push2.eastmoney.com/api/qt/clist/get",
+        "https://push2delay.eastmoney.com/api/qt/clist/get",
+    ]
     # EastMoney currently caps each response to 100 rows even when pz is larger.
     # Using 200 avoids one observed pz=100 abrupt close while still returning 100 rows.
     page_size = 200
-    first_payload = fetch_eastmoney_page(
-        requests,
-        base_url,
-        eastmoney_params(page=1, page_size=page_size),
-        page=1,
-    )
+    first_payload: dict[str, Any] | None = None
+    selected_base_url = base_urls[0]
+    first_errors: list[str] = []
+    for candidate_url in base_urls:
+        try:
+            first_payload = fetch_eastmoney_page(
+                requests,
+                candidate_url,
+                eastmoney_params(page=1, page_size=page_size),
+                page=1,
+            )
+            selected_base_url = candidate_url
+            break
+        except Exception as exc:
+            first_errors.append(f"{candidate_url}: {describe_upstream_error(exc)}")
+    if first_payload is None:
+        raise RuntimeError("EastMoney full-market edges failed: " + "; ".join(first_errors))
     first_data = first_payload.get("data") or {}
     total = int(first_data.get("total") or 0)
     first_rows = first_data.get("diff") or []
@@ -1176,26 +1198,31 @@ def eastmoney_spot_via_curl_cffi() -> pd.DataFrame:
     page_count = math.ceil(total / actual_page_size)
     rows_by_page: dict[int, list[dict[str, Any]]] = {1: first_rows}
 
-    with ThreadPoolExecutor(max_workers=8) as executor:
-        futures = {
-            executor.submit(
-                fetch_eastmoney_page,
+    for page in range(2, page_count + 1):
+        try:
+            payload = fetch_eastmoney_page(
                 requests,
-                base_url,
+                selected_base_url,
                 eastmoney_params(page=page, page_size=page_size),
                 page,
-            ): page
-            for page in range(2, page_count + 1)
-        }
-        for future in as_completed(futures):
-            page = futures[future]
-            payload = future.result()
-            data = payload.get("data") or {}
-            diff = data.get("diff") or []
-            if not diff and page <= page_count:
-                raise RuntimeError(f"EastMoney curl_cffi fallback returned empty page {page}.")
-            rows_by_page[page] = diff
-            time.sleep(0.02)
+            )
+        except Exception:
+            if selected_base_url == base_urls[-1]:
+                raise
+            selected_base_url = base_urls[-1]
+            payload = fetch_eastmoney_page(
+                requests,
+                selected_base_url,
+                eastmoney_params(page=page, page_size=page_size),
+                page,
+            )
+        data = payload.get("data") or {}
+        diff = data.get("diff") or []
+        if not diff and page <= page_count:
+            raise RuntimeError(f"EastMoney curl_cffi fallback returned empty page {page}.")
+        rows_by_page[page] = diff
+        # A small gap avoids burst-rate limiting from EastMoney's quote edges.
+        time.sleep(0.06)
 
     rows: list[dict[str, Any]] = []
     for page in range(1, page_count + 1):
@@ -1237,6 +1264,9 @@ def eastmoney_spot_via_curl_cffi() -> pd.DataFrame:
     for column in numeric_columns:
         out[column] = pd.to_numeric(out[column], errors="coerce")
     out["代码"] = out["代码"].astype(str).str.zfill(6)
+    out.attrs["stock_lab_source"] = (
+        "eastmoney_push2delay" if "push2delay" in selected_base_url else "eastmoney_push2"
+    )
     return out
 
 
@@ -1245,22 +1275,40 @@ def fetch_eastmoney_page(requests_module: Any, base_url: str, params: dict[str, 
     impersonates = ["chrome120", "chrome110", "safari17_0"]
     for attempt in range(4):
         try:
-            response = requests_module.get(
-                base_url,
-                params=params,
-                headers={
+            request_options = {
+                "params": params,
+                "headers": {
                     "Accept": "application/json,text/plain,*/*",
                     "Referer": "https://quote.eastmoney.com/",
                 },
-                impersonate=impersonates[attempt % len(impersonates)],
-                timeout=8,
-            )
+                "impersonate": impersonates[attempt % len(impersonates)],
+                "timeout": 8,
+            }
+            if attempt == 0:
+                request_options.update(prefer_ipv6_curl_options())
+            response = requests_module.get(base_url, **request_options)
             response.raise_for_status()
             return response.json()
         except Exception as exc:
             last_error = exc
             time.sleep(min(0.35 + attempt * 0.2, 2.5))
     raise RuntimeError(f"EastMoney curl_cffi fallback failed on page {page}: {last_error}") from last_error
+
+
+def prefer_ipv6_curl_options() -> dict[str, dict[Any, int]]:
+    """Prefer the working IPv6 route once, while preserving an IPv4/auto fallback.
+
+    Some office and cloud egress routes receive an empty response from EastMoney's
+    IPv4 edge while the same hostname works over IPv6. curl_cffi accepts libcurl's
+    IPRESOLVE option through ``curl_options``. Callers apply this only to their first
+    attempt; later attempts omit it so IPv4-only FaaS environments still work.
+    """
+
+    try:
+        from curl_cffi.const import CurlOpt
+    except ImportError:
+        return {}
+    return {"curl_options": {CurlOpt.IPRESOLVE: 2}}
 
 
 def eastmoney_params(page: int, page_size: int) -> dict[str, Any]:

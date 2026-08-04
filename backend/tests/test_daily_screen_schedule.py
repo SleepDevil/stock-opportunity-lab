@@ -66,6 +66,18 @@ def delivery_target():
     )
 
 
+def factor_snapshot(acquisition: str = "fetched"):
+    return SimpleNamespace(
+        trade_date="20260803",
+        captured_at="2026-08-03T15:02:10+08:00",
+        source="test_full_market",
+        row_count=5200,
+        factor_coverage={"量比": 0.99},
+        frame=pd.DataFrame([{"代码": "603228", "名称": "景旺电子"}]),
+        acquisition=acquisition,
+    )
+
+
 def test_close_screen_generates_once_persists_and_deduplicates_card(tmp_path, monkeypatch) -> None:
     config = AppConfig(
         data_dir=tmp_path,
@@ -82,9 +94,17 @@ def test_close_screen_generates_once_persists_and_deduplicates_card(tmp_path, mo
             "updated_at": "2026-08-03T15:00:10+08:00",
         },
     )
+    snapshot_calls: list[str] = []
+    monkeypatch.setattr(
+        daily_screen_schedule,
+        "load_or_fetch_market_factor_snapshot",
+        lambda _config, trade_date, _provider: snapshot_calls.append(trade_date) or factor_snapshot(),
+    )
     generated: list[str] = []
 
     def fake_generate(**kwargs):
+        assert kwargs["refresh"] is False
+        assert kwargs["provider"].spot("20260803").iloc[0]["代码"] == "603228"
         payload = report_payload()
         generated.append(kwargs["generation_source"])
         save_screen_report_snapshot(
@@ -107,10 +127,13 @@ def test_close_screen_generates_once_persists_and_deduplicates_card(tmp_path, mo
     second = daily_screen_schedule.run_daily_close_screen(config, close_slot(), now, targets=[delivery_target()])
 
     assert first and first["generation"] == "generated"
+    assert first["market_snapshot"]["status"] == "fetched"
     assert first["deliveries"] == [{"chat_id": "oc_abcdefgh12345678", "status": "sent"}]
     assert second and second["generation"] == "reused"
+    assert second["market_snapshot"] is None
     assert second["deliveries"] == [{"chat_id": "oc_abcdefgh12345678", "status": "deduplicated"}]
     assert generated == ["scheduled_close"]
+    assert snapshot_calls == ["20260803"]
     assert len(sent) == 1
     assert load_screen_report_snapshot(config, "20260803")["candidates"][0]["代码"] == "603228"
 
@@ -122,6 +145,11 @@ def test_close_screen_still_persists_without_notification_target(tmp_path, monke
         daily_screen_schedule,
         "load_market_index",
         lambda **_kwargs: {"trade_date": "20260803", "updated_at": "2026-08-03T15:00:10+08:00"},
+    )
+    monkeypatch.setattr(
+        daily_screen_schedule,
+        "load_or_fetch_market_factor_snapshot",
+        lambda *_args, **_kwargs: factor_snapshot(),
     )
 
     def fake_generate(**kwargs):
@@ -159,6 +187,11 @@ def test_manual_close_screen_accepts_completed_snapshot_after_freshness_window(t
             "updated_at": "2026-08-03T16:12:00+08:00",
             "points": [{"time": "2026-08-03 15:00", "price": 3800.0}],
         },
+    )
+    monkeypatch.setattr(
+        daily_screen_schedule,
+        "load_or_fetch_market_factor_snapshot",
+        lambda *_args, **_kwargs: factor_snapshot(),
     )
 
     def fake_generate(**kwargs):

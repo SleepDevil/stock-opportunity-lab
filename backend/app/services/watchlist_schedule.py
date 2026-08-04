@@ -40,6 +40,7 @@ SCHEDULED_SLOT_TIMES = (
     clock_time(15, 0),
 )
 DAILY_SCREEN_RETRY_TIMES = (
+    clock_time(15, 2),
     clock_time(15, 5),
     clock_time(15, 10),
 )
@@ -400,12 +401,10 @@ def run_watchlist_timer(
             LOGGER.exception("Scheduled watchlist commentary failed for %s", target.target_id)
             results.append({"target": target.target_id, "status": "failed", "message": str(exc)})
 
-    # The close report is deliberately attempted after commentary. Its upstream
-    # snapshot can be slower or temporarily unavailable, and must never delay the
-    # independently useful watchlist card.
+    # The full-market close report runs on its own 15:02/15:05/15:10 timer.
+    # Keeping it out of the 15:00 commentary invocation prevents a slow market
+    # snapshot from delaying the independently useful watchlist card.
     close_screen_result: dict[str, Any] | None = None
-    if slot.label == "15:00":
-        close_screen_result = run_close_screen_safely(config, slot, current)
 
     if not targets:
         return {

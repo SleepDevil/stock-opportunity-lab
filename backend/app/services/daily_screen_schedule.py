@@ -10,6 +10,10 @@ from app.config import AppConfig
 from app.services.daily_screen_card import build_daily_screen_card
 from app.services.data_provider import AkShareProvider, MarketDataProvider
 from app.services.learning_store import list_watchlist_commentary_subscriptions
+from app.services.market_factor_snapshot import (
+    SnapshotMarketDataProvider,
+    load_or_fetch_market_factor_snapshot,
+)
 from app.services.notification_settings import load_notification_settings
 from app.services.notifications import send_feishu_card
 from app.services.screen_generation import generate_screen_response
@@ -70,6 +74,7 @@ def run_daily_close_screen(
 
     delivery_targets = targets if targets is not None else configured_screen_delivery_targets(config)
     existing = load_screen_report_snapshot_record(config, slot.trade_date)
+    market_snapshot: dict[str, Any] | None = None
     if existing and existing.get("generation_source") == SCHEDULED_GENERATION_SOURCE:
         report = existing["payload"]
         generated_at = str(existing.get("generated_at") or now.isoformat(timespec="seconds"))
@@ -82,11 +87,24 @@ def run_daily_close_screen(
             now,
             allow_completed_close_snapshot=allow_completed_close_snapshot,
         )
+        source_provider = market_provider or AkShareProvider(config)
+        snapshot = load_or_fetch_market_factor_snapshot(config, slot.trade_date, source_provider)
+        snapshot_provider = SnapshotMarketDataProvider(
+            trade_date=slot.trade_date,
+            frame=snapshot.frame,
+            delegate=source_provider,
+        )
+        market_snapshot = {
+            "status": snapshot.acquisition,
+            "source": snapshot.source,
+            "captured_at": snapshot.captured_at,
+            "row_count": snapshot.row_count,
+        }
         report = generate_screen_response(
-            provider=market_provider or AkShareProvider(config),
+            provider=snapshot_provider,
             config=config,
             trade_date=slot.trade_date,
-            refresh=True,
+            refresh=False,
             limit=config.screen.max_candidates,
             enrich=False,
             exclude_boards=scheduled_excluded_boards(config, delivery_targets),
@@ -106,6 +124,7 @@ def run_daily_close_screen(
         "generation": generation_status,
         "candidate_count": len(report.get("candidates") or []),
         "filtered_count": int(report.get("filtered_count") or 0),
+        "market_snapshot": market_snapshot,
         "deliveries": deliveries,
     }
 

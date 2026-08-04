@@ -126,6 +126,20 @@ SCHEMA = [
     """,
     "CREATE INDEX IF NOT EXISTS idx_screen_report_snapshots_generated_at ON screen_report_snapshots(generated_at)",
     """
+    CREATE TABLE IF NOT EXISTS market_factor_snapshots (
+        trade_date TEXT PRIMARY KEY,
+        captured_at TEXT NOT NULL,
+        source TEXT NOT NULL,
+        row_count INTEGER NOT NULL,
+        factor_coverage_json TEXT NOT NULL,
+        payload_checksum TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_market_factor_snapshots_captured_at ON market_factor_snapshots(captured_at)",
+    """
     CREATE TABLE IF NOT EXISTS daily_screen_deliveries (
         idempotency_key TEXT PRIMARY KEY,
         trade_date TEXT NOT NULL,

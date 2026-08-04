@@ -399,7 +399,7 @@ export function SettingsPage({
         <div className="watchlist-feishu-switch-row">
           <Switch
             label="开启自选锐评与收盘选股飞书推送"
-            description="服务端 FaaS 在交易日 10:00、11:30、14:00、15:00 播报自选；15:00 同时落盘量化选股报告并推送第二张卡片。"
+            description="服务端 FaaS 在交易日 10:00、11:30、14:00、15:00 播报自选；15:02 获取并持久化收盘因子快照、生成量化选股报告，失败时于 15:05、15:10 重试。"
             checked={watchlistFeishuEnabled}
             onChange={(event) => setWatchlistFeishuEnabled(event.currentTarget.checked)}
           />

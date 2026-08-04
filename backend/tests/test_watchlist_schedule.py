@@ -145,21 +145,26 @@ def test_scheduled_slot_only_allows_four_daily_windows() -> None:
     assert watchlist_schedule.scheduled_slot(datetime.fromisoformat("2026-08-01T10:00:00+08:00")) is None
 
 
-def test_screen_retry_slot_only_allows_two_close_retry_windows() -> None:
+def test_screen_retry_slot_only_allows_three_close_windows() -> None:
     first = watchlist_schedule.scheduled_screen_retry_slot(
-        datetime.fromisoformat("2026-07-31T15:05:30+08:00")
+        datetime.fromisoformat("2026-07-31T15:02:30+08:00")
     )
     second = watchlist_schedule.scheduled_screen_retry_slot(
+        datetime.fromisoformat("2026-07-31T15:05:30+08:00")
+    )
+    third = watchlist_schedule.scheduled_screen_retry_slot(
         datetime.fromisoformat("2026-07-31T15:11:59+08:00")
     )
 
     assert first is not None
     assert first.label == "15:00"
-    assert first.key == "20260731-screen-retry-1505"
+    assert first.key == "20260731-screen-retry-1502"
     assert second is not None
-    assert second.key == "20260731-screen-retry-1510"
+    assert second.key == "20260731-screen-retry-1505"
+    assert third is not None
+    assert third.key == "20260731-screen-retry-1510"
     assert watchlist_schedule.scheduled_screen_retry_slot(
-        datetime.fromisoformat("2026-07-31T15:04:59+08:00")
+        datetime.fromisoformat("2026-07-31T15:01:59+08:00")
     ) is None
     assert watchlist_schedule.scheduled_screen_retry_slot(
         datetime.fromisoformat("2026-07-31T15:12:00+08:00")
@@ -182,19 +187,15 @@ def test_outside_schedule_does_not_load_persisted_targets(tmp_path, monkeypatch)
     assert result["status"] == "outside_schedule"
 
 
-def test_close_slot_runs_daily_screen_even_without_watchlist_targets(tmp_path, monkeypatch) -> None:
+def test_close_slot_does_not_run_full_market_screen_in_commentary_invocation(tmp_path, monkeypatch) -> None:
     config = AppConfig(data_dir=tmp_path, database_url=None)
-    calls: list[str] = []
     monkeypatch.setattr(watchlist_schedule, "commentary_targets", lambda *_args, **_kwargs: [])
     monkeypatch.setattr(
         watchlist_schedule,
         "run_daily_close_screen",
-        lambda _config, slot, _now: calls.append(slot.key) or {
-            "status": "completed",
-            "trade_date": slot.trade_date,
-            "generation": "generated",
-            "deliveries": [],
-        },
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("15:00 commentary must not wait for the full-market snapshot")
+        ),
     )
 
     result = watchlist_schedule.run_watchlist_timer(
@@ -202,13 +203,12 @@ def test_close_slot_runs_daily_screen_even_without_watchlist_targets(tmp_path, m
         now=datetime.fromisoformat("2026-07-31T15:00:20+08:00"),
     )
 
-    assert calls == ["20260731-1500"]
-    assert result["status"] == "completed"
-    assert result["screen_recommendation"]["generation"] == "generated"
+    assert result["status"] == "no_enabled_watchlists"
+    assert result["screen_recommendation"] is None
     assert result["results"] == []
 
 
-def test_close_slot_sends_commentary_before_attempting_daily_screen(tmp_path, monkeypatch) -> None:
+def test_close_slot_sends_commentary_without_attempting_daily_screen(tmp_path, monkeypatch) -> None:
     config = AppConfig(data_dir=tmp_path, database_url=None)
     target = watchlist_schedule.CommentaryTarget(
         target_id="trader@example.com",
@@ -230,10 +230,9 @@ def test_close_slot_sends_commentary_before_attempting_daily_screen(tmp_path, mo
     monkeypatch.setattr(
         watchlist_schedule,
         "run_daily_close_screen",
-        lambda *_args, **_kwargs: calls.append("screen") or {
-            "status": "completed",
-            "generation": "generated",
-        },
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("daily screen has a separate timer")
+        ),
     )
 
     result = watchlist_schedule.run_watchlist_timer(
@@ -241,9 +240,9 @@ def test_close_slot_sends_commentary_before_attempting_daily_screen(tmp_path, mo
         now=datetime.fromisoformat("2026-07-31T15:00:20+08:00"),
     )
 
-    assert calls == ["commentary", "screen"]
+    assert calls == ["commentary"]
     assert result["status"] == "sent"
-    assert result["screen_recommendation"]["generation"] == "generated"
+    assert result["screen_recommendation"] is None
 
 
 def test_screen_retry_task_only_runs_daily_screen(tmp_path, monkeypatch) -> None:
@@ -276,11 +275,11 @@ def test_screen_retry_task_only_runs_daily_screen(tmp_path, monkeypatch) -> None
 
     result = watchlist_schedule.run_watchlist_timer(
         config,
-        now=datetime.fromisoformat("2026-07-31T15:05:20+08:00"),
+        now=datetime.fromisoformat("2026-07-31T15:02:20+08:00"),
         task=watchlist_schedule.DAILY_SCREEN_RETRY_TASK,
     )
 
-    assert calls == ["20260731-screen-retry-1505"]
+    assert calls == ["20260731-screen-retry-1502"]
     assert result["status"] == "completed"
     assert result["task"] == watchlist_schedule.DAILY_SCREEN_RETRY_TASK
     assert result["screen_recommendation"]["generation"] == "reused"
