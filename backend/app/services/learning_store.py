@@ -4,11 +4,12 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 import hashlib
 import json
+import os
 from pathlib import Path
 import sqlite3
 from threading import Lock
 from typing import Any, Iterator
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qsl, unquote, urlencode, urlparse, urlsplit, urlunsplit
 
 from app.config import AppConfig
 
@@ -138,13 +139,61 @@ SCHEMA = [
     """,
     "CREATE INDEX IF NOT EXISTS idx_daily_screen_deliveries_date ON daily_screen_deliveries(trade_date)",
 ]
-POSTGRES_TIMEOUT_SECONDS = 3
+POSTGRES_CONNECT_TIMEOUT_SECONDS = 10
+POSTGRES_STATEMENT_TIMEOUT_SECONDS = 5
+AIDAP_TOKEN_PLACEHOLDER = "${Token}"
+AIDAP_TOKEN_ENV_NAMES = ("SEC_TOKEN_STRING", "Token", "STOCK_LAB_AIDAP_TOKEN")
+AIDAP_TOKEN_PATH_ENV = "SEC_TOKEN_PATH"
+MAX_AIDAP_TOKEN_LENGTH = 32 * 1024
 _SCHEMA_READY_KEYS: set[str] = set()
 _SCHEMA_READY_LOCK = Lock()
 
 
 def configured_database_url(config: AppConfig) -> str:
     return config.database_url or f"sqlite:///{config.default_sqlite_database_path}"
+
+
+def resolved_database_url(config: AppConfig) -> str:
+    return resolve_aidap_database_url(configured_database_url(config))
+
+
+def resolve_aidap_database_url(url: str) -> str:
+    """Inject the rotating FaaS workload token into an AIDAP PostgreSQL URL."""
+    if not is_postgres_url(url):
+        return url
+    parsed = urlsplit(url)
+    query = parse_qsl(parsed.query, keep_blank_values=True)
+    if not any(AIDAP_TOKEN_PLACEHOLDER in value for _, value in query):
+        return url
+    token = load_aidap_token()
+    resolved_query = [
+        (key, value.replace(AIDAP_TOKEN_PLACEHOLDER, token))
+        for key, value in query
+    ]
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, urlencode(resolved_query), parsed.fragment))
+
+
+def load_aidap_token() -> str:
+    for env_name in AIDAP_TOKEN_ENV_NAMES:
+        value = os.getenv(env_name, "")
+        if value.strip():
+            return validate_aidap_token(value)
+    token_path = os.getenv(AIDAP_TOKEN_PATH_ENV, "").strip()
+    if token_path:
+        try:
+            return validate_aidap_token(Path(token_path).read_text(encoding="utf-8"))
+        except OSError as exc:
+            raise RuntimeError("无法读取 FaaS 服务身份令牌文件。") from exc
+    raise RuntimeError(
+        "AIDAP PostgreSQL 需要 FaaS 服务身份令牌；请确认运行环境已注入 SEC_TOKEN_PATH。"
+    )
+
+
+def validate_aidap_token(value: str) -> str:
+    token = value.strip()
+    if not token or len(token) > MAX_AIDAP_TOKEN_LENGTH or any(character.isspace() for character in token):
+        raise RuntimeError("FaaS 服务身份令牌格式无效。")
+    return token
 
 
 def learning_database_path(config: AppConfig) -> Path:
@@ -156,15 +205,15 @@ def learning_database_path(config: AppConfig) -> Path:
 
 @contextmanager
 def connect(config: AppConfig) -> Iterator[Any]:
-    url = configured_database_url(config)
+    url = resolved_database_url(config)
     if is_postgres_url(url):
         try:
             import psycopg
             from psycopg.rows import dict_row
         except ImportError as exc:
             raise RuntimeError("Postgres DATABASE_URL requires the psycopg package.") from exc
-        conn = psycopg.connect(url, row_factory=dict_row, connect_timeout=POSTGRES_TIMEOUT_SECONDS)
-        conn.execute(f"SET statement_timeout = {POSTGRES_TIMEOUT_SECONDS * 1000}")
+        conn = psycopg.connect(url, row_factory=dict_row, connect_timeout=POSTGRES_CONNECT_TIMEOUT_SECONDS)
+        conn.execute(f"SET statement_timeout = {POSTGRES_STATEMENT_TIMEOUT_SECONDS * 1000}")
     elif is_sqlite_url(url):
         path = sqlite_path_from_url(url)
         path.parent.mkdir(parents=True, exist_ok=True)

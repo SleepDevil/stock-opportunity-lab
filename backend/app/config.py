@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import secrets
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 from dotenv import load_dotenv
 
@@ -239,10 +240,16 @@ class AppConfig:
 
 
 def mask_database_url(url: str) -> str:
-    if "@" not in url or "://" not in url:
+    if "://" not in url:
         return url
-    scheme, rest = url.split("://", 1)
-    return f"{scheme}://***@{rest.split('@', 1)[1]}"
+    parsed = urlsplit(url)
+    if parsed.scheme not in {"postgres", "postgresql"} or not parsed.hostname:
+        return url
+    hostname = f"[{parsed.hostname}]" if ":" in parsed.hostname else parsed.hostname
+    netloc = f"***@{hostname}"
+    if parsed.port:
+        netloc = f"{netloc}:{parsed.port}"
+    return urlunsplit((parsed.scheme, netloc, parsed.path, "", ""))
 
 
 CONFIG = AppConfig()
