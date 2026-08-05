@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Badge, Button, Divider, Group, Paper, SimpleGrid, Tabs, Text, ThemeIcon } from '@mantine/core';
 import { DatePickerInput } from '@mantine/dates';
 import { useQuery } from '@tanstack/react-query';
-import { BarChart3, CalendarDays, DatabaseZap, Gauge, Target, Workflow } from 'lucide-react';
+import { Activity, BarChart3, CalendarDays, DatabaseZap, Gauge, Target, Workflow } from 'lucide-react';
 
 import { AnalysisPanel } from '../../components/AnalysisPanel';
 import { BacktestTable } from '../../components/BacktestTable';
@@ -12,6 +12,7 @@ import { fetchLearningSummary } from '../../lib/api';
 import { displayTradeDate, formatPct, toTradeDate } from '../../lib/format';
 import type { BacktestResponse, ScreenResponse } from '../../types/api';
 import { LearningPanel } from './LearningPanel';
+import { RecommendationPerformancePanel } from './RecommendationPerformancePanel';
 import { QuantExperimentPanel } from '../quant/QuantExperimentPanel';
 
 export type BacktestPageState = {
@@ -51,8 +52,10 @@ export function BacktestPage({ state }: { state: BacktestPageState }) {
     queryFn: fetchLearningSummary
   });
   const learning = learningQuery.data ?? backtest?.learning_summary;
-  const [workspace, setWorkspace] = useState<string | null>('validation');
-  const workspaceDescription = workspace === 'quant'
+  const [workspace, setWorkspace] = useState<string | null>('performance');
+  const workspaceDescription = workspace === 'performance'
+    ? '逐日核对过去两周推荐，以次日开盘买入价追踪到当前，并与上证指数同轴比较。'
+    : workspace === 'quant'
     ? '检验多日策略和参数组合，比较收益、回撤、胜率与基准。'
     : workspace === 'learning'
       ? '复盘已验证样本，查看策略变化建议和历史学习记录。'
@@ -68,17 +71,22 @@ export function BacktestPage({ state }: { state: BacktestPageState }) {
             <Text fw={900}>选择研究任务</Text>
             <Text size="sm" c="dimmed">{workspaceDescription}</Text>
           </div>
-          <Badge color={workspace === 'quant' ? 'teal' : 'blue'} variant="light">
-            {workspace === 'quant' ? '多日策略' : workspace === 'validation' ? '单日验证' : '研究记录'}
+          <Badge color={workspace === 'performance' || workspace === 'quant' ? 'teal' : 'blue'} variant="light">
+            {workspace === 'performance' ? '推荐实绩' : workspace === 'quant' ? '多日策略' : workspace === 'validation' ? '单日验证' : '研究记录'}
           </Badge>
         </Group>
         <Tabs.List grow>
+          <Tabs.Tab value="performance" leftSection={<Activity size={16} />}>推荐兑现</Tabs.Tab>
           <Tabs.Tab value="validation" leftSection={<Target size={16} />}>次日验证</Tabs.Tab>
           <Tabs.Tab value="quant" leftSection={<BarChart3 size={16} />}>量化策略</Tabs.Tab>
           <Tabs.Tab value="learning" leftSection={<Workflow size={16} />}>策略复盘</Tabs.Tab>
           <Tabs.Tab value="reports" leftSection={<DatabaseZap size={16} />}>本地记录</Tabs.Tab>
         </Tabs.List>
       </Paper>
+
+      <Tabs.Panel value="performance" pt="md">
+        <RecommendationPerformancePanel asOfDate={actualDate} />
+      </Tabs.Panel>
 
       <Tabs.Panel value="validation" pt="md">
         <SimpleGrid cols={{ base: 1, lg: 2 }} spacing="md" className="control-grid">
@@ -175,4 +183,3 @@ export function BacktestPage({ state }: { state: BacktestPageState }) {
     </Tabs>
   );
 }
-

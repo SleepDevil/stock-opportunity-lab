@@ -643,6 +643,112 @@ export type BacktestResponse = {
   analysis: string;
 };
 
+export type RecommendationCurvePoint = {
+  date: string;
+  close?: number | null;
+  return_pct?: number | null;
+  daily_return_pct?: number | null;
+  benchmark_return_pct?: number | null;
+  excess_return_pct?: number | null;
+  price_carried_forward?: boolean;
+};
+
+export type RecommendationPerformanceStock = {
+  code: string;
+  name: string;
+  rank?: number | null;
+  score?: number | null;
+  report_date: string;
+  entry_date?: string | null;
+  recommendation_price?: number | null;
+  plan_low?: number | null;
+  plan_high?: number | null;
+  avoid_gap_price?: number | null;
+  opportunity_tag?: string | null;
+  status: 'tracked' | 'pending_entry' | 'no_entry_price';
+  status_label: string;
+  entry_price?: number | null;
+  latest_price?: number | null;
+  valuation_date?: string | null;
+  latest_stock_price_date?: string | null;
+  return_pct?: number | null;
+  benchmark_return_pct?: number | null;
+  excess_return_pct?: number | null;
+  plan_status?: 'within_plan' | 'above_plan' | 'above_abandon' | 'below_plan' | 'unknown' | null;
+  plan_status_label: string;
+  curve: RecommendationCurvePoint[];
+};
+
+export type RecommendationPerformanceCohort = {
+  report_date: string;
+  entry_date?: string | null;
+  valuation_date?: string | null;
+  status: 'tracked' | 'empty' | 'pending_entry' | 'no_price';
+  message: string;
+  candidate_count: number;
+  tracked_count: number;
+  current_return_pct?: number | null;
+  benchmark_return_pct?: number | null;
+  excess_return_pct?: number | null;
+  win_rate_pct?: number | null;
+  curve: RecommendationCurvePoint[];
+  stocks: RecommendationPerformanceStock[];
+};
+
+export type RecommendationPerformanceCalendarDay = {
+  date: string;
+  weekday: string;
+  status: 'reported' | 'reported_empty' | 'missing_report' | 'market_closed';
+  status_label: string;
+  candidate_count: number;
+  tracked_count: number;
+  return_pct?: number | null;
+};
+
+export type RecommendationPerformanceResponse = {
+  status: 'completed';
+  requested_as_of_date: string;
+  as_of_date: string;
+  period_start: string;
+  period_end: string;
+  lookback_days: number;
+  benchmark: { code: string; name: string };
+  entry_assumption: {
+    label: string;
+    price_field: string;
+    position_method: string;
+    costs_included: boolean;
+    exit_rule: string;
+    notes: string[];
+  };
+  summary: {
+    trading_day_count: number;
+    report_day_count: number;
+    missing_report_day_count: number;
+    missing_report_dates: string[];
+    report_coverage_pct?: number | null;
+    recommendation_count: number;
+    tracked_count: number;
+    tracked_cohort_count: number;
+    win_rate_pct?: number | null;
+    average_return_pct?: number | null;
+    average_excess_return_pct?: number | null;
+    cohort_average_return_pct?: number | null;
+    best?: { code: string; name: string; report_date: string; return_pct: number } | null;
+    worst?: { code: string; name: string; report_date: string; return_pct: number } | null;
+  };
+  calendar_days: RecommendationPerformanceCalendarDay[];
+  cohorts: RecommendationPerformanceCohort[];
+  data_quality: {
+    valuation_basis: string;
+    is_intraday: boolean;
+    latest_market_date?: string | null;
+    failed_symbols: string[];
+    notes: string[];
+  };
+  disclaimer: string;
+};
+
 export type QuantEngine = 'auto' | 'internal' | 'vectorbt';
 export type QuantStockPool = 'manual' | 'screen_candidates' | 'screen_targets';
 export type QuantStrategy = 'opportunity_pool' | 'ma_trend' | 'volume_breakout' | 'rsi_reversion' | 'momentum_rank';

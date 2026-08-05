@@ -4,6 +4,7 @@ import type {
   NotificationSettings,
   QuantRunsResponse,
   QuantStrategyCatalogResponse,
+  RecommendationPerformanceResponse,
   ScreenReportsResponse,
   ServerWatchlist,
   StrategyExperiment,
@@ -248,6 +249,75 @@ function normalizedPath(path: string): string {
   }
 }
 
+function staticRecommendationPerformance(path: string): RecommendationPerformanceResponse {
+  const url = new URL(path, 'https://static.stock-lab.local');
+  const today = new Date();
+  const fallbackEnd = `${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, '0')}${String(today.getDate()).padStart(2, '0')}`;
+  const endDate = (url.searchParams.get('end_date') ?? fallbackEnd).replaceAll('-', '');
+  const lookbackDays = Math.max(1, Math.min(Number(url.searchParams.get('lookback_days') ?? 14), 90));
+  const end = new Date(Date.UTC(Number(endDate.slice(0, 4)), Number(endDate.slice(4, 6)) - 1, Number(endDate.slice(6, 8))));
+  const start = new Date(end);
+  start.setUTCDate(start.getUTCDate() - lookbackDays);
+  const dateKey = (value: Date) => `${value.getUTCFullYear()}${String(value.getUTCMonth() + 1).padStart(2, '0')}${String(value.getUTCDate()).padStart(2, '0')}`;
+  const calendarDays: RecommendationPerformanceResponse['calendar_days'] = [];
+  for (const cursor = new Date(start); cursor <= end; cursor.setUTCDate(cursor.getUTCDate() + 1)) {
+    const closed = cursor.getUTCDay() === 0 || cursor.getUTCDay() === 6;
+    calendarDays.push({
+      date: dateKey(cursor),
+      weekday: '日一二三四五六'[cursor.getUTCDay()],
+      status: closed ? 'market_closed' : 'missing_report',
+      status_label: closed ? '休市' : '未扫描',
+      candidate_count: 0,
+      tracked_count: 0,
+      return_pct: null
+    });
+  }
+  const tradingDayCount = calendarDays.filter((day) => day.status !== 'market_closed').length;
+  return {
+    status: 'completed',
+    requested_as_of_date: endDate,
+    as_of_date: endDate,
+    period_start: dateKey(start),
+    period_end: endDate,
+    lookback_days: lookbackDays,
+    benchmark: { code: '000001', name: '上证指数' },
+    entry_assumption: {
+      label: '次一交易日开盘等权买入',
+      price_field: '未复权开盘价',
+      position_method: '每个推荐日内等权',
+      costs_included: false,
+      exit_rule: '持续持有至截至日最新可用价格',
+      notes: [unavailableMessage]
+    },
+    summary: {
+      trading_day_count: tradingDayCount,
+      report_day_count: 0,
+      missing_report_day_count: tradingDayCount,
+      missing_report_dates: calendarDays.filter((day) => day.status === 'missing_report').map((day) => day.date),
+      report_coverage_pct: 0,
+      recommendation_count: 0,
+      tracked_count: 0,
+      tracked_cohort_count: 0,
+      win_rate_pct: null,
+      average_return_pct: null,
+      average_excess_return_pct: null,
+      cohort_average_return_pct: null,
+      best: null,
+      worst: null
+    },
+    calendar_days: calendarDays,
+    cohorts: [],
+    data_quality: {
+      valuation_basis: '静态镜像无行情',
+      is_intraday: false,
+      latest_market_date: null,
+      failed_symbols: [],
+      notes: [unavailableMessage]
+    },
+    disclaimer: unavailableMessage
+  };
+}
+
 export function isStaticMode(): boolean {
   return import.meta.env.VITE_STOCK_LAB_STATIC_MODE === 'true';
 }
@@ -266,6 +336,7 @@ export async function staticRequest<T>(path: string, init?: RequestInit): Promis
     '/api/strategy-optimization': strategyOptimization(),
     '/api/wechat-knowledge': wechatKnowledge,
     '/api/screen-reports': screenReports,
+    '/api/recommendation-performance': staticRecommendationPerformance(path),
     '/api/quant/runs': quantRuns,
     '/api/quant/strategies': quantStrategies,
     '/api/notification-settings': notificationSettings(),

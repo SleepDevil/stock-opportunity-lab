@@ -39,7 +39,7 @@
         "minimizable": false,
         "fullscreen": false,
         "shadow": true,
-        "visible": true
+        "visible": false
       }
     ],
     "security": {

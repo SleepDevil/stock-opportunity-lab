@@ -37,6 +37,7 @@ from app.models import (
     QuantBacktestRequest,
     QuantRunsResponse,
     QuantStrategyCatalogResponse,
+    RecommendationPerformanceResponse,
     ScreenRequest,
     ScreenResponse,
     ScreenReportsResponse,
@@ -84,6 +85,7 @@ from app.services.notification_settings import load_notification_settings, norma
 from app.services.notifications import send_feishu_card, send_feishu_tip
 from app.services.news_theme import empty_news_theme_scan, load_news_theme_scan, run_news_theme_scan
 from app.services.quant_engine import list_quant_runs, load_quant_run, quant_strategy_catalog, run_quant_backtest
+from app.services.recommendation_performance import build_recommendation_performance
 from app.services.screen_generation import generate_screen_response
 from app.services.screen_report_store import load_screen_report_snapshot, list_screen_report_snapshot_dates
 from app.services.screener import latest_screen_date, load_screen_report, load_screen_targets, run_screen
@@ -437,6 +439,34 @@ def screen_report(date: str) -> ScreenResponse:
             ai_payload=payload,
             analysis=explain(payload),
         )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/recommendation-performance", response_model=RecommendationPerformanceResponse)
+def recommendation_performance(
+    end_date: str | None = None,
+    lookback_days: int = 14,
+    refresh: bool = False,
+) -> RecommendationPerformanceResponse:
+    def build() -> dict[str, object]:
+        try:
+            index_snapshot = load_market_index(refresh=refresh)
+        except Exception:
+            index_snapshot = None
+        return build_recommendation_performance(
+            provider=provider(),
+            config=CONFIG,
+            end_date=end_date,
+            lookback_days=lookback_days,
+            refresh=refresh,
+            market_index_snapshot=index_snapshot,
+        )
+
+    try:
+        return RecommendationPerformanceResponse(**run_market_data_call(build))
+    except TimeoutError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

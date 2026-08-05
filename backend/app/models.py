@@ -580,6 +580,22 @@ class BacktestResponse(BaseModel):
     analysis: str
 
 
+class RecommendationPerformanceResponse(BaseModel):
+    status: Literal["completed"] = "completed"
+    requested_as_of_date: str
+    as_of_date: str
+    period_start: str
+    period_end: str
+    lookback_days: int
+    benchmark: dict[str, Any]
+    entry_assumption: dict[str, Any]
+    summary: dict[str, Any]
+    calendar_days: list[dict[str, Any]]
+    cohorts: list[dict[str, Any]]
+    data_quality: dict[str, Any]
+    disclaimer: str
+
+
 class QuantBacktestResponse(BaseModel):
     status: Literal["completed"] = "completed"
     run_id: str

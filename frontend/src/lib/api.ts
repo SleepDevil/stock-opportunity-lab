@@ -17,6 +17,7 @@ import type {
   QuantBacktestRequest,
   QuantRunsResponse,
   QuantStrategyCatalogResponse,
+  RecommendationPerformanceResponse,
   SectorConstituentType,
   SectorConstituentsResponse,
   SectorFlowResponse,
@@ -163,6 +164,22 @@ export function fetchScreenReports(): Promise<ScreenReportsResponse> {
 export function fetchScreenReport(date: string): Promise<ScreenResponse> {
   const params = new URLSearchParams({ date });
   return request<ScreenResponse>(`/api/screen-report?${params.toString()}`);
+}
+
+export function fetchRecommendationPerformance(input: {
+  end_date?: string;
+  lookback_days?: number;
+  refresh?: boolean;
+} = {}): Promise<RecommendationPerformanceResponse> {
+  const params = new URLSearchParams();
+  if (input.end_date) {
+    params.set('end_date', input.end_date);
+  }
+  params.set('lookback_days', String(input.lookback_days ?? 14));
+  if (input.refresh) {
+    params.set('refresh', 'true');
+  }
+  return request<RecommendationPerformanceResponse>(`/api/recommendation-performance?${params.toString()}`);
 }
 
 export function fetchSectorFlow(input: { date: string; scope: SectorScope; include_crisis?: boolean; include_realtime?: boolean }): Promise<SectorFlowResponse> {
