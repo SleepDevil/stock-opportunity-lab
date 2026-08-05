@@ -153,13 +153,24 @@ jobs:
             --dir "$metadata_dir" \
             --clobber
 
-          gh api \
-            "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" \
+          # GitHub's release-by-tag REST endpoint returns 404 for draft releases.
+          # `gh release view` can still resolve the draft and exposes each asset's
+          # API URL, which is enough to map updater asset IDs to final tag URLs.
+          gh release view "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json assets \
             > "$metadata_dir/release.json"
 
-          jq --slurpfile release "$metadata_dir/release.json" '
+          public_prefix="https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/"
+
+          jq --slurpfile release "$metadata_dir/release.json" \
+            --arg prefix "$public_prefix" \
+            '
             ($release[0].assets
-              | map({key: (.id | tostring), value: .browser_download_url})
+              | map({
+                  key: (.apiUrl | capture("/(?<id>[0-9]+)$").id),
+                  value: ($prefix + (.name | @uri))
+                })
               | from_entries) as $asset_urls
             | .platforms |= with_entries(
                 if (.value.url | test("/releases/assets/[0-9]+$")) then
@@ -172,9 +183,10 @@ jobs:
                   .
                 end
               )
-          ' "$metadata_dir/latest.json" > "$metadata_dir/latest.public.json"
+            ' \
+            "$metadata_dir/latest.json" \
+            > "$metadata_dir/latest.public.json"
 
-          public_prefix="https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/"
           jq -e \
             --arg version "$RELEASE_VERSION" \
             --arg prefix "$public_prefix" \
