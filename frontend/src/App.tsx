@@ -45,6 +45,7 @@ import {
 } from './features/opportunity/screenTaskModel';
 import { SectorsPage } from './features/sectors/SectorsPage';
 import { SettingsPage } from './features/settings/SettingsPage';
+import { readStoredUserEmail, writeStoredUserEmail } from './features/settings/accountStorage';
 import {
   boardOptions,
   defaultScreenPreferences,
@@ -168,7 +169,6 @@ const pageMeta: Record<AppRoutePath, { title: string; subtitle: string }> = {
 };
 
 const SETTINGS_STORAGE_KEY = 'stock-opportunity-lab:screen-preferences';
-const USER_EMAIL_STORAGE_KEY = 'stock-opportunity-lab:user-email';
 const LAST_SCREEN_STORAGE_KEY = 'stock-opportunity-lab:last-screen';
 
 const AppStateContext = createContext<AppState | null>(null);
@@ -198,13 +198,6 @@ function readScreenPreferences(): ScreenPreferences {
   } catch {
     return defaultScreenPreferences;
   }
-}
-
-function readStoredUserEmail(): string {
-  if (typeof window === 'undefined') {
-    return '';
-  }
-  return normalizeEmailInput(window.localStorage.getItem(USER_EMAIL_STORAGE_KEY) ?? '');
 }
 
 function readLastScreen(): ScreenResponse | undefined {
@@ -410,12 +403,7 @@ function AppShell() {
   }, [screenPreferences]);
 
   useEffect(() => {
-    const email = userEmail.trim();
-    if (email) {
-      window.localStorage.setItem(USER_EMAIL_STORAGE_KEY, email);
-    } else {
-      window.localStorage.removeItem(USER_EMAIL_STORAGE_KEY);
-    }
+    writeStoredUserEmail(userEmail);
   }, [userEmail]);
 
   useEffect(() => {

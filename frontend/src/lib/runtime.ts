@@ -1,4 +1,8 @@
-import { resolveApiRequestUrl, resolveRuntimeApiBaseUrl } from './runtimeModel';
+import {
+  resolveApiRequestUrl,
+  resolveRuntimeApiBaseUrl,
+  resolveRuntimeSyncApiBaseUrl
+} from './runtimeModel';
 
 export function isDesktopRuntime(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
@@ -8,13 +12,25 @@ const apiBaseUrl = resolveRuntimeApiBaseUrl(
   import.meta.env.VITE_STOCK_LAB_API_BASE_URL,
   isDesktopRuntime()
 );
+const syncApiBaseUrl = resolveRuntimeSyncApiBaseUrl(
+  import.meta.env.VITE_STOCK_LAB_SYNC_API_BASE_URL,
+  isDesktopRuntime()
+);
 
 export function resolveApiUrl(path: string): string {
   return resolveApiRequestUrl(path, apiBaseUrl);
 }
 
+export function resolveSyncApiUrl(path: string): string {
+  return resolveApiRequestUrl(path, syncApiBaseUrl);
+}
+
 export function apiRequestCredentials(): RequestCredentials {
   return apiBaseUrl ? 'include' : 'same-origin';
+}
+
+export function syncApiRequestCredentials(): RequestCredentials {
+  return syncApiBaseUrl ? 'include' : 'same-origin';
 }
 
 function sleep(delayMs: number): Promise<void> {

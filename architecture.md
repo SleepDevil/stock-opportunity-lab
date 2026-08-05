@@ -220,7 +220,7 @@ screen_date:actual_date:code
 
 - 页面、组件、样式、API 类型、TanStack Query key 和业务模型全部位于 `frontend/src`，两端直接复用。
 - Web 构建继续请求同源 `/api`，开发时由 Vite 代理到 `127.0.0.1:8000`。
-- 桌面生产构建把 FastAPI 打包为 PyInstaller sidecar，默认只连接本地 `127.0.0.1:8765`；定制构建可通过 `VITE_STOCK_LAB_API_BASE_URL` 改用部署者配置的 HTTPS API，但该值会进入安装包。
+- 桌面生产构建把 FastAPI 打包为 PyInstaller sidecar，行情与分析默认连接本地 `127.0.0.1:8765`；账户设置、自选名单和锐评请求通过独立的共享同步端点访问线上服务，使 Web 与桌面使用同一份持久化数据。分叉部署可用 `VITE_STOCK_LAB_SYNC_API_BASE_URL` 覆盖同步地址，或用 `VITE_STOCK_LAB_API_BASE_URL` 整体切换 API。
 - `DesktopBootstrap` 只在 Tauri WebView 中等待 API 健康检查；浏览器端不会出现桌面启动流程。
 - 原生窗口、托盘、自启动和悬浮框只进入 `src-tauri` 或桌面专属路由，不进入通用业务服务。
 - `widget` 窗口加载 `/desktop-widget`，复用扫描报告 API、Candidate 类型和格式化函数；原生桥接仅负责显示、隐藏、置顶和主窗口导航。

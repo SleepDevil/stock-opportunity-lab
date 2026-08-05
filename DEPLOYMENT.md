@@ -74,7 +74,7 @@ curl -fsS http://127.0.0.1:8000/api/health
 
 ## 桌面构建
 
-默认桌面客户端包含本地 FastAPI sidecar，不依赖部署后的 Web API：
+默认桌面客户端包含本地 FastAPI sidecar，行情与分析不依赖部署后的 Web API；账户设置、自选名单和锐评使用共享同步服务：
 
 ```bash
 npm run desktop:build
@@ -85,7 +85,7 @@ GitHub Actions 使用以下仓库 Secrets：
 - `TAURI_SIGNING_PRIVATE_KEY`：Tauri updater 私钥。
 - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`：私钥密码；无密码密钥可不配置。
 
-如需构建连接自建 HTTPS API 的定制客户端，可在本地设置 `VITE_STOCK_LAB_API_BASE_URL`。这个地址会写入安装包，不应通过公开构建或公开 Release 分发敏感端点。
+分叉部署可设置 `VITE_STOCK_LAB_SYNC_API_BASE_URL` 覆盖账户与自选同步地址；如需让全部桌面 API 都连接自建 HTTPS 服务，再设置 `VITE_STOCK_LAB_API_BASE_URL`。这些地址会写入安装包，不应包含密钥或其他敏感信息。
 
 普通 PR 和 `main` 提交只生成 Actions Artifacts。只有与 `src-tauri/tauri.conf.json` 版本一致的 `desktop-vX.Y.Z` 标签才发布签名更新；全部平台成功后 Release 才会成为 Latest。
 

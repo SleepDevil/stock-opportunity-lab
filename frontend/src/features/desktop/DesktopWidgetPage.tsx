@@ -15,6 +15,8 @@ import {
   ArrowUpDown,
   ArrowUpNarrowWide,
   Check,
+  Cloud,
+  CloudOff,
   Dock,
   ExternalLink,
   Eye,
@@ -60,6 +62,11 @@ import type {
   StockSearchItem
 } from '../../types/api';
 import {
+  readStoredUserEmail,
+  subscribeStoredUserEmail
+} from '../settings/accountStorage';
+import { useWatchlistSync } from '../watchlist/useWatchlistSync';
+import {
   addDesktopWatchStock,
   buildDesktopIntradaySparkline,
   buildDesktopWidgetQuoteSlots,
@@ -82,11 +89,8 @@ import {
 } from './desktopWidgetModel';
 import {
   readDesktopPrimaryQuoteSelection,
-  readDesktopWatchlist,
   readDesktopWatchlistSortMode,
-  subscribeDesktopWatchlist,
   writeDesktopPrimaryQuoteSelection,
-  writeDesktopWatchlist,
   writeDesktopWatchlistSortMode
 } from './desktopWatchlist';
 
@@ -152,7 +156,9 @@ function formatQuoteTime(value?: string | null): string {
 export function DesktopWidgetPage() {
   const cachedScreen = useMemo(readCachedScreen, []);
   const [view, setView] = useState<'watchlist' | 'opportunities'>('watchlist');
-  const [watchlist, setWatchlist] = useState(readDesktopWatchlist);
+  const [userEmail, setUserEmail] = useState(readStoredUserEmail);
+  const watchlistSync = useWatchlistSync(userEmail);
+  const watchlist = watchlistSync.watchlist;
   const [watchlistSortMode, setWatchlistSortMode] = useState(readDesktopWatchlistSortMode);
   const [primarySelection, setPrimarySelection] = useState(readDesktopPrimaryQuoteSelection);
   const [addOpened, setAddOpened] = useState(false);
@@ -258,7 +264,7 @@ export function DesktopWidgetPage() {
   useEffect(() => {
     document.documentElement.dataset.desktopWidget = 'true';
     document.body.classList.add('desktop-widget-body');
-    const unsubscribe = subscribeDesktopWatchlist(setWatchlist);
+    const unsubscribeEmail = subscribeStoredUserEmail(setUserEmail);
     const timer = window.setInterval(() => setClock(new Date()), 30_000);
     let disposed = false;
     let unsubscribeDock: (() => void) | undefined;
@@ -274,7 +280,7 @@ export function DesktopWidgetPage() {
       .catch(() => undefined);
     return () => {
       disposed = true;
-      unsubscribe();
+      unsubscribeEmail();
       unsubscribeDock?.();
       window.clearInterval(timer);
       delete document.documentElement.dataset.desktopWidget;
@@ -322,18 +328,28 @@ export function DesktopWidgetPage() {
 
   const addStock = (item: StockSearchItem) => {
     const next = addDesktopWatchStock(watchlist, { code: item.code, name: item.name });
-    setWatchlist(writeDesktopWatchlist(next));
+    watchlistSync.updateWatchlist(next);
     setStockSearchText('');
     setAddOpened(false);
     setView('watchlist');
   };
 
   const removeStock = (code: string) => {
-    setWatchlist(writeDesktopWatchlist(watchlist.filter((stock) => stock.code !== code)));
+    watchlistSync.updateWatchlist(watchlist.filter((stock) => stock.code !== code));
   };
 
   const reorderStock = (sourceCode: string, targetCode: string, position: DesktopWatchlistDropPosition) => {
-    setWatchlist(writeDesktopWatchlist(reorderDesktopWatchlist(watchlist, sourceCode, targetCode, position)));
+    watchlistSync.updateWatchlist(reorderDesktopWatchlist(watchlist, sourceCode, targetCode, position));
+  };
+
+  const handleWatchlistSyncAction = () => {
+    if (watchlistSync.status === 'account_required') {
+      void showDesktopMainWindow('/settings');
+      return;
+    }
+    if (watchlistSync.status === 'error') {
+      watchlistSync.retry();
+    }
   };
 
   const cycleWatchlistSort = () => {
@@ -441,6 +457,19 @@ export function DesktopWidgetPage() {
           </div>
         </div>
         <div className="desktop-widget-actions">
+          {view === 'watchlist' ? (
+            <Tooltip label={watchlistSync.error || watchlistSync.statusLabel}>
+              <ActionIcon
+                variant={watchlistSync.status === 'synced' ? 'light' : 'subtle'}
+                color={watchlistSync.status === 'synced' ? 'teal' : watchlistSync.status === 'error' ? 'red' : 'orange'}
+                aria-label={watchlistSync.statusLabel}
+                loading={watchlistSync.status === 'loading' || watchlistSync.status === 'syncing'}
+                onClick={handleWatchlistSyncAction}
+              >
+                {watchlistSync.status === 'synced' ? <Cloud size={16} /> : <CloudOff size={16} />}
+              </ActionIcon>
+            </Tooltip>
+          ) : null}
           {view === 'watchlist' ? (
             <StockPicker
               opened={addOpened}

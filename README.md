@@ -76,7 +76,7 @@ npm run desktop:dev
 npm run desktop:build
 ```
 
-构建脚本会先用 PyInstaller 打包本地 FastAPI sidecar，客户端只连接回环地址，不需要在安装包中保存任何部署端点。确实需要连接自建服务时仍可在本地构建前设置 `VITE_STOCK_LAB_API_BASE_URL=https://api.example.com`；该值会进入前端 Bundle，因此不应把敏感或仅供内部使用的地址交给公开 CI。
+构建脚本会先用 PyInstaller 打包本地 FastAPI sidecar，行情、分析和本地报告默认只连接回环地址。账户设置与自选名单使用独立的共享同步端点，使 Web、主窗口和悬浮窗读写同一份服务端名单；官方构建使用项目平台地址，分叉部署可通过 `VITE_STOCK_LAB_SYNC_API_BASE_URL=https://api.example.com` 覆盖。确实需要让全部桌面 API 连接自建服务时，仍可设置 `VITE_STOCK_LAB_API_BASE_URL`。
 
 桌面客户端会检查 GitHub Releases 中的签名更新。macOS 应用菜单提供 `Check for Updates…`，发现新版本后主窗口会显示更新按钮。完整构建与签名流程见 [`docs/desktop-client.md`](docs/desktop-client.md)。
 

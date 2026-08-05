@@ -50,17 +50,26 @@ import type {
   WatchlistCommentaryRequest,
   WatchlistCommentaryResponse
 } from '../types/api';
-import { apiRequestCredentials, resolveApiUrl } from './runtime';
+import {
+  apiRequestCredentials,
+  resolveApiUrl,
+  resolveSyncApiUrl,
+  syncApiRequestCredentials
+} from './runtime';
 import { isStaticMode, staticRequest } from './staticApi';
 
 const headers = { 'Content-Type': 'application/json' };
 const clientAuthHeader = 'X-Stock-Lab-CSRF';
 const screenSubmitTimeoutMs = 15000;
 
-let clientAuthTokenPromise: Promise<string> | null = null;
+let clientAuthTokenPromise: { authUrl: string; promise: Promise<string> } | null = null;
 
 async function clientAuthToken(): Promise<string> {
-  clientAuthTokenPromise ??= fetch(resolveApiUrl('/api/client-auth'), { credentials: apiRequestCredentials() })
+  const authUrl = resolveSyncApiUrl('/api/client-auth');
+  if (clientAuthTokenPromise?.authUrl === authUrl) {
+    return clientAuthTokenPromise.promise;
+  }
+  const promise = fetch(authUrl, { credentials: syncApiRequestCredentials() })
     .then(async (response) => {
       if (!response.ok) {
         throw new Error(response.statusText || '客户端鉴权失败');
@@ -75,7 +84,8 @@ async function clientAuthToken(): Promise<string> {
       clientAuthTokenPromise = null;
       throw error;
     });
-  return clientAuthTokenPromise;
+  clientAuthTokenPromise = { authUrl, promise };
+  return promise;
 }
 
 function requiresClientAuth(path: string): boolean {
@@ -97,14 +107,18 @@ async function request<T>(path: string, init?: RequestInit, retryClientAuth = tr
   if (isStaticMode()) {
     return staticRequest<T>(path, init);
   }
-  const nextInit: RequestInit = { ...init, credentials: init?.credentials ?? apiRequestCredentials() };
-  if (requiresClientAuth(path)) {
+  const protectedRequest = requiresClientAuth(path);
+  const nextInit: RequestInit = {
+    ...init,
+    credentials: init?.credentials ?? (protectedRequest ? syncApiRequestCredentials() : apiRequestCredentials())
+  };
+  if (protectedRequest) {
     const nextHeaders = new Headers(init?.headers);
     nextHeaders.set(clientAuthHeader, await clientAuthToken());
     nextInit.headers = nextHeaders;
   }
-  const response = await fetch(resolveApiUrl(path), nextInit);
-  if (response.status === 403 && retryClientAuth && requiresClientAuth(path)) {
+  const response = await fetch(protectedRequest ? resolveSyncApiUrl(path) : resolveApiUrl(path), nextInit);
+  if (response.status === 403 && retryClientAuth && protectedRequest) {
     clientAuthTokenPromise = null;
     return request<T>(path, init, false);
   }

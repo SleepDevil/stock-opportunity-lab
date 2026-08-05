@@ -64,3 +64,15 @@ test('prefers the configured online API for production desktop builds', () => {
     'https://api.example.com'
   );
 });
+
+test('routes desktop account and watchlist persistence to the shared service', () => {
+  assert.equal(
+    runtimeModel.resolveRuntimeSyncApiBaseUrl(undefined, true),
+    'https://ova6bqzi.cn-east-fn.bytedance.net'
+  );
+  assert.equal(runtimeModel.resolveRuntimeSyncApiBaseUrl(undefined, false), '');
+  assert.equal(
+    runtimeModel.resolveRuntimeSyncApiBaseUrl('https://sync.example.com/', true),
+    'https://sync.example.com'
+  );
+});
