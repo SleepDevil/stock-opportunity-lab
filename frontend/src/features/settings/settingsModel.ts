@@ -31,3 +31,9 @@ export function sanitizeBoards(values?: unknown): string[] {
 export function normalizeEmailInput(value: string): string {
   return value.trim().toLowerCase();
 }
+
+const EMAIL_PATTERN = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+
+export function isValidEmailInput(value: string): boolean {
+  return EMAIL_PATTERN.test(normalizeEmailInput(value));
+}

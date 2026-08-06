@@ -8,7 +8,8 @@ import {
   type PointerEvent
 } from 'react';
 import { createPortal } from 'react-dom';
-import { ActionIcon, Badge, Loader, Popover, TextInput, Tooltip } from '@mantine/core';
+import { ActionIcon, Badge, Button, Group, Loader, Modal, Popover, Stack, Text, TextInput, Tooltip } from '@mantine/core';
+import { notifications } from '@mantine/notifications';
 import { useQuery } from '@tanstack/react-query';
 import {
   ArrowDownWideNarrow,
@@ -22,6 +23,7 @@ import {
   Eye,
   EyeOff,
   GripVertical,
+  Mail,
   MousePointer2,
   Pin,
   PinOff,
@@ -63,8 +65,10 @@ import type {
 } from '../../types/api';
 import {
   readStoredUserEmail,
-  subscribeStoredUserEmail
+  subscribeStoredUserEmail,
+  writeStoredUserEmail
 } from '../settings/accountStorage';
+import { isValidEmailInput, normalizeEmailInput } from '../settings/settingsModel';
 import { useWatchlistSync } from '../watchlist/useWatchlistSync';
 import {
   addDesktopWatchStock,
@@ -163,6 +167,9 @@ export function DesktopWidgetPage() {
   const [primarySelection, setPrimarySelection] = useState(readDesktopPrimaryQuoteSelection);
   const [addOpened, setAddOpened] = useState(false);
   const [stockSearchText, setStockSearchText] = useState('');
+  const [accountBindingOpened, setAccountBindingOpened] = useState(false);
+  const [accountEmailInput, setAccountEmailInput] = useState(readStoredUserEmail);
+  const [accountEmailError, setAccountEmailError] = useState('');
   const [pinned, setPinned] = useState(true);
   const [dockState, setDockState] = useState<DesktopWidgetDockState>(INACTIVE_DOCK_STATE);
   const [dockChanging, setDockChanging] = useState(false);
@@ -326,7 +333,43 @@ export function DesktopWidgetPage() {
     void startDesktopWidgetDragging().then(setDockState).catch(() => undefined);
   };
 
+  const openAccountBinding = () => {
+    setAddOpened(false);
+    setAccountEmailInput(userEmail);
+    setAccountEmailError('');
+    setAccountBindingOpened(true);
+  };
+
+  const requireBoundAccount = (): boolean => {
+    if (userEmail) return true;
+    openAccountBinding();
+    return false;
+  };
+
+  const bindAccount = () => {
+    const email = normalizeEmailInput(accountEmailInput);
+    if (!isValidEmailInput(email)) {
+      setAccountEmailError('请输入完整邮箱，例如 name@example.com');
+      return;
+    }
+    writeStoredUserEmail(email);
+    setUserEmail(email);
+    setAccountEmailError('');
+    setAccountBindingOpened(false);
+    notifications.show({
+      color: 'teal',
+      title: '同步账户已绑定',
+      message: `正在把本机 ${watchlist.length} 只自选与服务端合并。云朵变绿后即同步完成。`
+    });
+  };
+
+  const changeAddOpened = (opened: boolean) => {
+    if (opened && !requireBoundAccount()) return;
+    setAddOpened(opened);
+  };
+
   const addStock = (item: StockSearchItem) => {
+    if (!requireBoundAccount()) return;
     const next = addDesktopWatchStock(watchlist, { code: item.code, name: item.name });
     watchlistSync.updateWatchlist(next);
     setStockSearchText('');
@@ -335,16 +378,18 @@ export function DesktopWidgetPage() {
   };
 
   const removeStock = (code: string) => {
+    if (!requireBoundAccount()) return;
     watchlistSync.updateWatchlist(watchlist.filter((stock) => stock.code !== code));
   };
 
   const reorderStock = (sourceCode: string, targetCode: string, position: DesktopWatchlistDropPosition) => {
+    if (!requireBoundAccount()) return;
     watchlistSync.updateWatchlist(reorderDesktopWatchlist(watchlist, sourceCode, targetCode, position));
   };
 
   const handleWatchlistSyncAction = () => {
     if (watchlistSync.status === 'account_required') {
-      void showDesktopMainWindow('/settings');
+      openAccountBinding();
       return;
     }
     if (watchlistSync.status === 'error') {
@@ -473,7 +518,7 @@ export function DesktopWidgetPage() {
           {view === 'watchlist' ? (
             <StockPicker
               opened={addOpened}
-              onOpenedChange={setAddOpened}
+              onOpenedChange={changeAddOpened}
               query={stockSearchText}
               onQueryChange={setStockSearchText}
               items={stockSearchQuery.data?.results ?? []}
@@ -575,7 +620,7 @@ export function DesktopWidgetPage() {
             error={quotesQuery.error}
             stale={quotesQuery.data?.is_stale ?? false}
             message={quotesQuery.data?.message}
-            onAdd={() => setAddOpened(true)}
+            onAdd={() => changeAddOpened(true)}
             onRemove={removeStock}
             onReorder={reorderStock}
             reorderEnabled={watchlistSortMode === 'manual'}
@@ -639,6 +684,41 @@ export function DesktopWidgetPage() {
           打开工作台 <ExternalLink size={14} />
         </button>
       </footer>
+
+      <Modal
+        opened={accountBindingOpened}
+        onClose={() => setAccountBindingOpened(false)}
+        title="绑定自选同步账户"
+        centered
+        size="sm"
+      >
+        <form onSubmit={(event) => { event.preventDefault(); bindAccount(); }}>
+          <Stack gap="md">
+            <Text size="sm" c="dimmed">
+              Web、客户端和 FaaS 定时播报必须使用同一个完整邮箱。绑定后会自动合并并上传本机已有自选。
+            </Text>
+            <TextInput
+              autoFocus
+              label="账户邮箱"
+              description="邮箱只作为当前个人项目的同步标识。"
+              placeholder="name@example.com"
+              value={accountEmailInput}
+              leftSection={<Mail size={15} />}
+              error={accountEmailError || undefined}
+              onChange={(event) => {
+                setAccountEmailInput(event.currentTarget.value);
+                if (accountEmailError) setAccountEmailError('');
+              }}
+            />
+            <Group justify="flex-end" gap="xs">
+              <Button variant="subtle" color="gray" onClick={() => setAccountBindingOpened(false)}>暂不绑定</Button>
+              <Button color="teal" type="submit" disabled={!accountEmailInput.trim()}>
+                绑定并同步 {watchlist.length} 只自选
+              </Button>
+            </Group>
+          </Stack>
+        </form>
+      </Modal>
     </main>
   );
 }

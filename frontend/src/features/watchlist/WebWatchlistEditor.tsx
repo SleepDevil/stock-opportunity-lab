@@ -16,10 +16,12 @@ import './watchlistCommentary.css';
 
 export function WebWatchlistEditor({
   watchlist,
-  onChange
+  onChange,
+  disabled = false
 }: {
   watchlist: DesktopWatchStock[];
   onChange: (watchlist: DesktopWatchStock[]) => void;
+  disabled?: boolean;
 }) {
   const [query, setQuery] = useState('');
   const trimmedQuery = query.trim();
@@ -34,12 +36,13 @@ export function WebWatchlistEditor({
       signal,
       timeoutMs: 6_000
     }),
-    enabled: Boolean(debouncedQuery),
+    enabled: Boolean(debouncedQuery) && !disabled,
     staleTime: 5 * 60_000,
     retry: false
   });
 
   const addStock = (stock: DesktopWatchStock) => {
+    if (disabled) return;
     onChange(addDesktopWatchStock(watchlist, stock));
     setQuery('');
   };
@@ -58,7 +61,8 @@ export function WebWatchlistEditor({
         mt="sm"
         value={query}
         leftSection={waitingForDebounce || searchQuery.isFetching ? <Loader size={14} /> : <Search size={15} />}
-        placeholder="输入股票名称、代码或首字母添加自选"
+        placeholder={disabled ? '先保存账户邮箱，再维护自选名单' : '输入股票名称、代码或首字母添加自选'}
+        disabled={disabled}
         onChange={(event) => setQuery(event.currentTarget.value)}
       />
 
@@ -74,7 +78,7 @@ export function WebWatchlistEditor({
               <button
                 key={item.code}
                 type="button"
-                disabled={selected || full}
+                disabled={disabled || selected || full}
                 onClick={() => addStock({ code: item.code, name: item.name })}
               >
                 <span><strong>{item.name}</strong><small>{item.code}</small></span>
@@ -106,6 +110,7 @@ export function WebWatchlistEditor({
                   variant="subtle"
                   color="gray"
                   aria-label={`移除 ${stock.name}`}
+                  disabled={disabled}
                   onClick={() => onChange(watchlist.filter((item) => item.code !== stock.code))}
                 >
                   <Trash2 size={14} />

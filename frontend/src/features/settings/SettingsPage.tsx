@@ -23,6 +23,7 @@ import { WebWatchlistEditor } from '../watchlist/WebWatchlistEditor';
 import {
   boardOptions,
   defaultScreenPreferences,
+  isValidEmailInput,
   normalizeEmailInput,
   presetMainBoardOnly,
   sanitizeBoards,
@@ -54,7 +55,11 @@ export function SettingsPage({
   const [watchlistFeishuChatId, setWatchlistFeishuChatId] = useState('');
   const [watchlistPlatformUrl, setWatchlistPlatformUrl] = useState('');
   const savedAccountEmail = normalizeEmailInput(userEmail);
-  const effectiveNotificationEmail = normalizeEmailInput(userEmail || notificationEmail);
+  const normalizedNotificationEmail = normalizeEmailInput(notificationEmail);
+  const notificationEmailValid = isValidEmailInput(normalizedNotificationEmail);
+  const effectiveNotificationEmail = isValidEmailInput(userEmail || notificationEmail)
+    ? normalizeEmailInput(userEmail || notificationEmail)
+    : '';
   const watchlistSync = useWatchlistSync(savedAccountEmail);
   const watchlist = watchlistSync.watchlist;
   const notificationQuery = useQuery({
@@ -306,20 +311,21 @@ export function SettingsPage({
       <Paper className="settings-card" withBorder>
         <Group justify="space-between" align="flex-start" mb="md">
           <div>
-            <Text fw={900}>账户邮箱与通知</Text>
-            <Text size="sm" c="dimmed">邮箱作为当前配置的简单登录标识，也用于后台任务完成后的飞书通知。</Text>
+            <Text fw={900}>同步账户与通知</Text>
+            <Text size="sm" c="dimmed">完整邮箱是 Web、客户端和 FaaS 共用的同步标识，也用于后台任务完成后的飞书通知。</Text>
           </div>
           <Badge color={userEmail ? 'teal' : 'gray'} variant="light">
-            {userEmail ? '已登录' : '未登录'}
+            {userEmail ? '已绑定' : '未绑定'}
           </Badge>
         </Group>
         <SimpleGrid cols={{ base: 1, md: 2 }} spacing="sm">
           <TextInput
-            label="通知邮箱"
+            label="同步账户邮箱"
             placeholder="name@example.com"
             value={notificationEmail}
             leftSection={<Mail size={15} />}
             disabled={notificationQuery.isLoading}
+            error={notificationEmail && !notificationEmailValid ? '请输入包含域名的完整邮箱' : undefined}
             onChange={(event) => setNotificationEmail(event.currentTarget.value)}
           />
           <div className="notification-actions">
@@ -328,10 +334,10 @@ export function SettingsPage({
               variant="filled"
               leftSection={<Settings2 size={16} />}
               loading={saveNotificationMutation.isPending}
-              disabled={notificationQuery.isLoading || !normalizeEmailInput(notificationEmail)}
+              disabled={notificationQuery.isLoading || !notificationEmailValid}
               onClick={() => saveNotificationMutation.mutate(notificationSettingsPayload())}
             >
-              保存账户设置
+              {savedAccountEmail ? '保存账户设置' : '绑定并保存账户'}
             </Button>
             <Button
               variant="light"
@@ -373,11 +379,12 @@ export function SettingsPage({
         <WebWatchlistEditor
           watchlist={watchlist}
           onChange={watchlistSync.updateWatchlist}
+          disabled={!savedAccountEmail}
         />
 
         {watchlistSync.status === 'account_required' ? (
-          <Alert mt="sm" color="orange" variant="light" icon={<CloudOff size={17} />} title="填写邮箱后自动同步">
-            自选已保存在当前设备；先保存上方账户邮箱，系统会自动合并并上传，不会覆盖现有服务端名单。
+          <Alert mt="sm" color="orange" variant="light" icon={<CloudOff size={17} />} title="先绑定同步账户">
+            请先在上方填写并保存完整邮箱。绑定前不能增删自选，绑定后系统会自动合并当前设备与服务端名单，避免定时播报漏股。
           </Alert>
         ) : null}
         {watchlistSync.status === 'error' ? (
@@ -435,7 +442,7 @@ export function SettingsPage({
               color="dark"
               leftSection={<Settings2 size={16} />}
               loading={saveWatchlistSubscriptionMutation.isPending}
-              disabled={notificationQuery.isLoading || !normalizeEmailInput(notificationEmail) || (watchlistFeishuEnabled && (!watchlistFeishuChatId.trim() || !watchlistPlatformUrl.trim()))}
+              disabled={notificationQuery.isLoading || !notificationEmailValid || (watchlistFeishuEnabled && (!watchlistFeishuChatId.trim() || !watchlistPlatformUrl.trim()))}
               onClick={() => saveWatchlistSubscriptionMutation.mutate()}
             >
               保存订阅配置

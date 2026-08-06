@@ -109,15 +109,15 @@ export function useWatchlistSync(userEmail: string) {
   }, [queryClient]);
 
   const updateWatchlist = useCallback((value: DesktopWatchStock[]) => {
-    const next = writeDesktopWatchlist(normalizeDesktopWatchlist(value));
-    desiredWatchlistRef.current = next;
-    setWatchlist(next);
     const activeEmail = emailRef.current;
     if (!activeEmail) {
       setStatus('account_required');
-      setError('请先在策略设置中保存账户邮箱');
-      return next;
+      setError('请先绑定完整邮箱，再修改自选名单');
+      return desiredWatchlistRef.current;
     }
+    const next = writeDesktopWatchlist(normalizeDesktopWatchlist(value));
+    desiredWatchlistRef.current = next;
+    setWatchlist(next);
     markWatchlistSyncPending(activeEmail, next);
     void flush();
     return next;
