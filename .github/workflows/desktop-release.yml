@@ -3,14 +3,25 @@ name: Publish desktop release
 on:
   workflow_dispatch:
   push:
+    branches:
+      - main
     tags:
       - "desktop-v*"
+    paths:
+      - ".github/workflows/desktop-release.yml"
+      - "release-please-config.json"
+      - ".release-please-manifest.json"
+      - "version.txt"
+      - "scripts/sync-desktop-version.mjs"
+      - "src-tauri/Cargo.toml"
+      - "src-tauri/Cargo.lock"
+      - "src-tauri/tauri.conf.json"
 
 permissions:
   contents: write
 
 concurrency:
-  group: desktop-release-${{ github.ref }}
+  group: desktop-release
   cancel-in-progress: false
 
 jobs:
@@ -18,6 +29,9 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      should_release: ${{ steps.version.outputs.should_release }}
+      create_tag: ${{ steps.version.outputs.create_tag }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -32,6 +46,8 @@ jobs:
             exit 1
           fi
 
+          node scripts/sync-desktop-version.mjs --check
+
           expected_tag="desktop-v${version}"
           if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "${GITHUB_REF_NAME}" != "$expected_tag" ]; then
             echo "Release tag ${GITHUB_REF_NAME} does not match desktop version $version (expected $expected_tag)" >&2
@@ -39,9 +55,47 @@ jobs:
           fi
 
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$expected_tag" >> "$GITHUB_OUTPUT"
+
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+            echo "create_tag=false" >> "$GITHUB_OUTPUT"
+          elif git ls-remote --exit-code --tags origin "refs/tags/$expected_tag" > /dev/null 2>&1; then
+            echo "Tag $expected_tag already exists; no desktop release is required."
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            echo "create_tag=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Version $version has not been released; preparing $expected_tag."
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+            echo "create_tag=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  prepare-release-tag:
+    needs: release-metadata
+    if: needs.release-metadata.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Create release tag after the Release PR is merged
+        if: needs.release-metadata.outputs.create_tag == 'true'
+        env:
+          RELEASE_TAG: ${{ needs.release-metadata.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.release-metadata.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$RELEASE_TAG" -m "Stock Opportunity Lab v$RELEASE_VERSION"
+          git push origin "$RELEASE_TAG"
 
   publish-tauri:
-    needs: release-metadata
+    needs:
+      - release-metadata
+      - prepare-release-tag
+    if: needs.release-metadata.outputs.should_release == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -206,7 +260,7 @@ jobs:
             --clobber
 
   publish-release:
-    if: github.ref_type == 'tag'
+    if: needs.release-metadata.outputs.should_release == 'true'
     needs:
       - release-metadata
       - finalize-updater-metadata

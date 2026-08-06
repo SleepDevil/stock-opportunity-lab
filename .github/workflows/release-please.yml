@@ -1,0 +1,76 @@
+name: Prepare desktop release
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/release-please.yml"
+      - "release-please-config.json"
+      - ".release-please-manifest.json"
+      - "version.txt"
+      - "desktop/**"
+      - "backend/**"
+      - "frontend/**"
+      - "scripts/build-desktop-sidecar.sh"
+      - "scripts/sync-desktop-version.mjs"
+      - "src-tauri/**"
+      - "package.json"
+      - "package-lock.json"
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: desktop-release-please
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create or update the desktop release pull request
+        id: release
+        uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+      - name: Check out repository before synchronizing the release branch
+        if: steps.release.outputs.prs_created == 'true'
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        if: steps.release.outputs.prs_created == 'true'
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22.17.1
+
+      - name: Synchronize desktop version files in the Release PR
+        if: steps.release.outputs.prs_created == 'true'
+        shell: bash
+        env:
+          RELEASE_PR: ${{ steps.release.outputs.pr }}
+        run: |
+          release_branch="$(jq -er '.headBranchName' <<< "$RELEASE_PR")"
+          git fetch origin "$release_branch"
+          git switch --force-create "$release_branch" "origin/$release_branch"
+
+          node scripts/sync-desktop-version.mjs
+
+          if git diff --quiet -- src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock; then
+            echo "Desktop version files already match the Release PR version."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock
+          git commit -m "chore: synchronize desktop version files"
+          git push origin "HEAD:$release_branch"
