@@ -1,6 +1,6 @@
 [package]
 name = "stock-opportunity-lab-desktop"
-version = "0.1.7"
+version = "0.2.0"
 description = "Desktop client for Stock Opportunity Lab"
 authors = ["Stock Opportunity Lab"]
 edition = "2024"
