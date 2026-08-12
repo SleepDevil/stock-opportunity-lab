@@ -82,7 +82,7 @@ test('does not write again when local and server lists already match', () => {
   assert.equal(result.reason, 'equal');
 });
 
-test('preserves local ordering and caps migration merges at eight stocks', () => {
+test('preserves local ordering without dropping stocks during migration merges', () => {
   const local = Array.from({ length: 7 }, (_, index) => ({
     code: String(index + 1).padStart(6, '0'),
     name: `本地${index + 1}`
@@ -93,6 +93,6 @@ test('preserves local ordering and caps migration merges at eight stocks', () =>
   ];
   assert.deepEqual(
     model.mergeWatchlists(local, server).map((stock) => stock.code),
-    ['000001', '000002', '000003', '000004', '000005', '000006', '000007', '000008']
+    ['000001', '000002', '000003', '000004', '000005', '000006', '000007', '000008', '000009']
   );
 });

@@ -75,7 +75,6 @@ import {
   buildDesktopIntradaySparkline,
   buildDesktopWidgetQuoteSlots,
   buildDesktopWidgetSummary,
-  DESKTOP_WATCHLIST_LIMIT,
   desktopMarketSession,
   desktopMarketSessionLabel,
   desktopQuoteRefreshInterval,
@@ -765,17 +764,14 @@ function StockPicker({
         <div className="desktop-stock-picker-results">
           {loading ? <span className="desktop-stock-picker-hint"><Loader size="xs" />正在搜索</span> : null}
           {!loading && error ? <span className="desktop-stock-picker-hint is-error">{desktopErrorMessage(error)}</span> : null}
-          {!loading && !error && !query.trim() ? <span className="desktop-stock-picker-hint">输入关键词查找股票，最多添加 8 只。</span> : null}
+          {!loading && !error && !query.trim() ? <span className="desktop-stock-picker-hint">输入关键词查找股票。</span> : null}
           {!loading && !error && query.trim() && !items.length ? <span className="desktop-stock-picker-hint">没有匹配的股票</span> : null}
           {!loading && !error ? items.map((item) => {
             const selected = watchlist.some((stock) => stock.code === item.code);
-            const atLimit = watchlist.length >= DESKTOP_WATCHLIST_LIMIT;
             return (
-              <button key={item.code} type="button" disabled={selected || atLimit} onClick={() => onSelect(item)}>
+              <button key={item.code} type="button" disabled={selected} onClick={() => onSelect(item)}>
                 <span><strong>{item.name}</strong><small>{item.code}</small></span>
-                {selected
-                  ? <Badge size="xs" color="gray">已添加</Badge>
-                  : atLimit ? <Badge size="xs" color="orange">已满</Badge> : <Plus size={15} />}
+                {selected ? <Badge size="xs" color="gray">已添加</Badge> : <Plus size={15} />}
               </button>
             );
           }) : null}

@@ -73,6 +73,19 @@ test('normalizes and deduplicates the desktop watchlist', () => {
   ]);
 });
 
+test('preserves more than eight valid watchlist stocks', () => {
+  const stocks = Array.from({ length: 12 }, (_, index) => ({
+    code: String(index + 1).padStart(6, '0'),
+    name: `股票${index + 1}`
+  }));
+
+  assert.deepEqual(model.normalizeDesktopWatchlist(stocks), stocks);
+  assert.equal(
+    model.addDesktopWatchStock(stocks, { code: '000013', name: '股票13' }).length,
+    13
+  );
+});
+
 test('normalizes the primary quote selection and falls back when a stock leaves the watchlist', () => {
   assert.deepEqual(model.normalizeDesktopPrimaryQuoteSelection(null), { kind: 'index' });
   assert.deepEqual(model.normalizeDesktopPrimaryQuoteSelection({ kind: 'index' }), { kind: 'index' });

@@ -51,8 +51,6 @@ export type DesktopSparklineGeometry = {
   latestY: number;
 };
 
-export const DESKTOP_WATCHLIST_LIMIT = 8;
-
 export function selectDesktopWidgetCandidates(candidates: Candidate[] | undefined, limit = 3): Candidate[] {
   if (!Array.isArray(candidates) || limit <= 0) {
     return [];
@@ -80,8 +78,8 @@ export function desktopWidgetChangeTone(value: number): 'up' | 'down' | 'flat' {
   return 'flat';
 }
 
-export function normalizeDesktopWatchlist(value: unknown, limit = DESKTOP_WATCHLIST_LIMIT): DesktopWatchStock[] {
-  if (!Array.isArray(value) || limit <= 0) {
+export function normalizeDesktopWatchlist(value: unknown): DesktopWatchStock[] {
+  if (!Array.isArray(value)) {
     return [];
   }
   const result: DesktopWatchStock[] = [];
@@ -91,22 +89,20 @@ export function normalizeDesktopWatchlist(value: unknown, limit = DESKTOP_WATCHL
     const name = String((item as { name?: unknown }).name ?? '').trim();
     if (!/^\d{6}$/.test(code) || !name || result.some((stock) => stock.code === code)) continue;
     result.push({ code, name });
-    if (result.length >= limit) break;
   }
   return result;
 }
 
 export function addDesktopWatchStock(
   watchlist: DesktopWatchStock[],
-  stock: DesktopWatchStock,
-  limit = DESKTOP_WATCHLIST_LIMIT
+  stock: DesktopWatchStock
 ): DesktopWatchStock[] {
-  const normalized = normalizeDesktopWatchlist([stock], 1);
-  if (!normalized.length) return normalizeDesktopWatchlist(watchlist, limit);
+  const normalized = normalizeDesktopWatchlist([stock]);
+  if (!normalized.length) return normalizeDesktopWatchlist(watchlist);
   return normalizeDesktopWatchlist([
     normalized[0],
     ...watchlist.filter((item) => item.code !== normalized[0].code)
-  ], limit);
+  ]);
 }
 
 export function normalizeDesktopPrimaryQuoteSelection(value: unknown): DesktopPrimaryQuoteSelection {

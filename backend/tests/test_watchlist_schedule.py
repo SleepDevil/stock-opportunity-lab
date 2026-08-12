@@ -64,6 +64,26 @@ def test_server_watchlist_roundtrip_and_default(tmp_path, monkeypatch) -> None:
     ]
 
 
+def test_server_watchlist_accepts_more_than_eight_stocks(tmp_path, monkeypatch) -> None:
+    config = AppConfig(data_dir=tmp_path, database_url=None, client_auth_secret="client-secret")
+    monkeypatch.setattr(main, "CONFIG", config)
+    monkeypatch.setattr(watchlist_router, "CONFIG", config)
+    client = TestClient(main.app)
+    stocks = [
+        {"code": f"{index:06d}", "name": f"股票{index}"}
+        for index in range(1, 13)
+    ]
+
+    response = client.put(
+        "/api/watchlist",
+        headers=signed_headers(client),
+        json={"user_email": "trader@example.com", "stocks": stocks},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["stocks"] == stocks
+
+
 def test_server_watchlist_requires_frontend_auth(tmp_path, monkeypatch) -> None:
     config = AppConfig(data_dir=tmp_path, database_url=None, client_auth_secret="client-secret")
     monkeypatch.setattr(main, "CONFIG", config)

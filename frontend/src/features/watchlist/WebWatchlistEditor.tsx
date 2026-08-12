@@ -8,7 +8,6 @@ import { fetchStockSearch } from '../../lib/api';
 import { todayInputValue, toTradeDate } from '../../lib/format';
 import {
   addDesktopWatchStock,
-  DESKTOP_WATCHLIST_LIMIT,
   desktopStockAnalysisPath,
   type DesktopWatchStock
 } from '../desktop/desktopWidgetModel';
@@ -52,7 +51,7 @@ export function WebWatchlistEditor({
       <Group justify="space-between" align="flex-start" gap="md">
         <div>
           <Text fw={900}>服务端自选名单</Text>
-          <Text size="xs" c="dimmed">添加或移除后立即同步，FaaS 定时读取同一份名单；最多 {DESKTOP_WATCHLIST_LIMIT} 只。</Text>
+          <Text size="xs" c="dimmed">添加或移除后立即同步，FaaS 定时读取同一份名单。</Text>
         </div>
         <Badge color={watchlist.length ? 'teal' : 'gray'} variant="light">{watchlist.length} 只</Badge>
       </Group>
@@ -73,16 +72,15 @@ export function WebWatchlistEditor({
           {!waitingForDebounce && !searchQuery.isFetching && !searchQuery.error && !(searchQuery.data?.results.length) ? <span>没有匹配的股票。</span> : null}
           {!waitingForDebounce && (searchQuery.data?.results ?? []).map((item) => {
             const selected = watchlist.some((stock) => stock.code === item.code);
-            const full = watchlist.length >= DESKTOP_WATCHLIST_LIMIT;
             return (
               <button
                 key={item.code}
                 type="button"
-                disabled={disabled || selected || full}
+                disabled={disabled || selected}
                 onClick={() => addStock({ code: item.code, name: item.name })}
               >
                 <span><strong>{item.name}</strong><small>{item.code}</small></span>
-                {selected ? <Badge size="xs" color="gray">已添加</Badge> : full ? <Badge size="xs" color="orange">已满</Badge> : <Plus size={15} />}
+                {selected ? <Badge size="xs" color="gray">已添加</Badge> : <Plus size={15} />}
               </button>
             );
           })}

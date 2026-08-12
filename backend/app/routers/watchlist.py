@@ -10,7 +10,6 @@ from app.services.client_auth import ClientAuthError, require_client_auth
 from app.services.daily_screen_schedule import run_manual_daily_close_screen
 from app.services.learning_store import ensure_schema
 from app.services.watchlist_schedule import (
-    MAX_WATCHLIST_STOCKS,
     ensure_watchlist_schema,
     get_server_watchlist,
     run_watchlist_timer,
@@ -29,14 +28,14 @@ class ServerWatchlistStock(BaseModel):
 
 class ServerWatchlistResponse(BaseModel):
     user_email: str
-    stocks: list[ServerWatchlistStock] = Field(default_factory=list, max_length=MAX_WATCHLIST_STOCKS)
+    stocks: list[ServerWatchlistStock] = Field(default_factory=list)
     source: Literal["stored", "deployment_default", "empty"]
     updated_at: str | None = None
 
 
 class ServerWatchlistUpdate(BaseModel):
     user_email: str = Field(min_length=3, max_length=254)
-    stocks: list[ServerWatchlistStock] = Field(default_factory=list, max_length=MAX_WATCHLIST_STOCKS)
+    stocks: list[ServerWatchlistStock] = Field(default_factory=list)
 
 
 class StorageHealthResponse(BaseModel):

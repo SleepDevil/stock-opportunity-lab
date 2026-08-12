@@ -25,7 +25,6 @@ from app.services.watchlist_commentary_card import build_watchlist_commentary_ca
 
 LOGGER = logging.getLogger("stock_lab.watchlist_schedule")
 SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
-MAX_WATCHLIST_STOCKS = 8
 DEFAULT_TARGET_ID = "__deployment_default__"
 DEFAULT_WATCHLIST_ENV = "STOCK_LAB_WATCHLIST_COMMENTARY_DEFAULT_WATCHLIST"
 TIMER_NAME_ENV = "STOCK_LAB_WATCHLIST_COMMENTARY_TIMER_NAME"
@@ -113,8 +112,6 @@ def ensure_watchlist_schema(config: AppConfig) -> None:
 
 
 def normalize_watchlist_stocks(values: list[dict[str, Any]] | None) -> list[dict[str, str]]:
-    if len(values or []) > MAX_WATCHLIST_STOCKS:
-        raise ValueError(f"自选锐评最多支持 {MAX_WATCHLIST_STOCKS} 只股票")
     stocks: list[dict[str, str]] = []
     seen: set[str] = set()
     for value in values or []:

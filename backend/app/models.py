@@ -179,7 +179,7 @@ class WatchlistCommentaryRequest(BaseModel):
     session: Literal["preopen", "trading", "break", "closed"] = "trading"
     manual: bool = False
     is_stale: bool = False
-    quotes: list[WatchlistCommentaryQuote] = Field(min_length=1, max_length=8)
+    quotes: list[WatchlistCommentaryQuote] = Field(min_length=1)
     market: WatchlistCommentaryMarket | None = None
 
 

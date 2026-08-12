@@ -635,7 +635,7 @@ def test_watchlist_commentary_api_validates_and_returns_response() -> None:
     assert "不构成投资建议" in body["disclaimer"]
 
 
-def test_watchlist_commentary_api_limits_watchlist_size() -> None:
+def test_watchlist_commentary_api_accepts_more_than_eight_stocks() -> None:
     request = sample_request()
     request["quotes"] = [
         {"code": f"{index:06d}", "name": f"股票{index}", "pct_change": 0}
@@ -644,7 +644,8 @@ def test_watchlist_commentary_api_limits_watchlist_size() -> None:
 
     response = signed_post(TestClient(main.app), "/api/watchlist-commentary", request)
 
-    assert response.status_code == 422
+    assert response.status_code == 200
+    assert response.json()["summary"]["total"] == 9
 
 
 def test_watchlist_commentary_api_requires_client_auth() -> None:

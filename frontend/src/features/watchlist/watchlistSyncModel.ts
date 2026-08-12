@@ -1,5 +1,4 @@
 import {
-  DESKTOP_WATCHLIST_LIMIT,
   normalizeDesktopWatchlist,
   type DesktopWatchStock
 } from '../desktop/desktopWidgetModel.js';
@@ -25,10 +24,10 @@ export function mergeWatchlists(
   localWatchlist: DesktopWatchStock[],
   serverWatchlist: DesktopWatchStock[]
 ): DesktopWatchStock[] {
-  return normalizeDesktopWatchlist(
-    [...normalizeDesktopWatchlist(localWatchlist), ...normalizeDesktopWatchlist(serverWatchlist)],
-    DESKTOP_WATCHLIST_LIMIT
-  );
+  return normalizeDesktopWatchlist([
+    ...normalizeDesktopWatchlist(localWatchlist),
+    ...normalizeDesktopWatchlist(serverWatchlist)
+  ]);
 }
 
 export function reconcileWatchlists(
