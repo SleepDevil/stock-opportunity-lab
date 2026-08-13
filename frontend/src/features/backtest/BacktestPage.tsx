@@ -85,7 +85,7 @@ export function BacktestPage({ state }: { state: BacktestPageState }) {
       </Paper>
 
       <Tabs.Panel value="performance" pt="md">
-        <RecommendationPerformancePanel asOfDate={actualDate} />
+        <RecommendationPerformancePanel />
       </Tabs.Panel>
 
       <Tabs.Panel value="validation" pt="md">

@@ -18,9 +18,10 @@ from app.services.screen_generation import generate_screen_response
 from app.services.screen_report_store import (
     list_screen_report_snapshot_dates,
     load_screen_report_snapshot,
+    load_screen_report_snapshots,
     save_screen_report_snapshot,
 )
-from app.services.screener import validate_required_screen_factors
+from app.services.screener import latest_screen_date, load_screen_report, load_screen_targets, validate_required_screen_factors
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -286,6 +287,71 @@ def test_screen_report_api_reads_database_snapshot_without_files(tmp_path, monke
     assert reports.json() == {"dates": ["20260801"], "latest": "20260801"}
     assert report.status_code == 200
     assert report.json()["candidates"][0]["名称"] == "景旺电子"
+
+
+def test_screen_report_store_loads_inclusive_database_window(tmp_path) -> None:
+    config = AppConfig(data_dir=tmp_path, database_url=None)
+    for trade_date in ["20260731", "20260803", "20260804"]:
+        save_screen_report_snapshot(
+            config,
+            report_payload(trade_date),
+            generation_source="scheduled_close",
+            generated_at=f"{trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:]}T15:02:00+08:00",
+        )
+
+    snapshots = load_screen_report_snapshots(config, "20260803", "20260804")
+
+    assert list(snapshots) == ["20260803", "20260804"]
+    assert snapshots["20260803"]["candidates"][0]["名称"] == "景旺电子"
+
+
+def test_shared_screen_loader_prefers_database_snapshot_across_instances(tmp_path) -> None:
+    config = AppConfig(data_dir=tmp_path, database_url=None)
+    save_screen_report_snapshot(
+        config,
+        report_payload("20260803"),
+        generation_source="scheduled_close",
+        generated_at="2026-08-03T15:02:00+08:00",
+    )
+
+    frame = load_screen_report(config, "20260803")
+
+    assert frame.iloc[0]["名称"] == "景旺电子"
+    assert latest_screen_date(config) == "20260803"
+
+
+def test_shared_screen_target_loader_reads_persisted_target_pool(tmp_path) -> None:
+    config = AppConfig(data_dir=tmp_path, database_url=None)
+    payload = report_payload("20260803")
+    payload["targets"] = [
+        {"代码": "603228", "名称": "景旺电子", "score": 91.6},
+        {"代码": "000001", "名称": "监控池样本", "score": 70.0},
+    ]
+    save_screen_report_snapshot(
+        config,
+        payload,
+        generation_source="scheduled_close",
+        generated_at="2026-08-03T15:02:00+08:00",
+    )
+
+    targets = load_screen_targets(config, "20260803")
+
+    assert targets["代码"].tolist() == ["603228", "000001"]
+
+
+def test_shared_screen_target_loader_degrades_old_snapshot_to_candidates(tmp_path) -> None:
+    config = AppConfig(data_dir=tmp_path, database_url=None)
+    save_screen_report_snapshot(
+        config,
+        report_payload("20260803"),
+        generation_source="scheduled_close",
+        generated_at="2026-08-03T15:02:00+08:00",
+    )
+
+    targets = load_screen_targets(config, "20260803")
+
+    assert targets["代码"].tolist() == ["603228"]
+    assert targets.attrs["scope_degraded"] == "candidates_fallback"
 
 
 def test_shared_screen_generation_persists_manual_report_snapshot(tmp_path) -> None:

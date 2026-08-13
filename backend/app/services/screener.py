@@ -105,6 +105,7 @@ class ScreenRun:
     board_excluded_count: int
     excluded_boards: list[str]
     candidates: pd.DataFrame
+    targets: pd.DataFrame
     report_paths: dict[str, str]
 
 
@@ -178,6 +179,7 @@ def run_screen(
         board_excluded_count=board_excluded_count,
         excluded_boards=excluded_board_codes,
         candidates=candidates,
+        targets=target_pool,
         report_paths=report_paths,
     )
 
@@ -436,6 +438,15 @@ def persist_screen(config: AppConfig, trade_date: str, candidates: pd.DataFrame,
 
 def load_screen_report(config: AppConfig, trade_date: str) -> pd.DataFrame:
     normalized = normalize_trade_date(trade_date)
+    try:
+        from app.services.screen_report_store import load_screen_report_snapshot
+
+        snapshot = load_screen_report_snapshot(config, normalized)
+    except Exception:
+        snapshot = None
+    if snapshot is not None:
+        candidates = snapshot.get("candidates")
+        return parse_report_frame(pd.DataFrame(candidates if isinstance(candidates, list) else []))
     path = config.reports_dir / f"screen_{normalized}.csv"
     if not path.exists():
         raise FileNotFoundError(f"Missing screen report for {normalized}. Run a scan for that date first.")
@@ -444,9 +455,29 @@ def load_screen_report(config: AppConfig, trade_date: str) -> pd.DataFrame:
 
 def load_screen_targets(config: AppConfig, trade_date: str) -> pd.DataFrame:
     normalized = normalize_trade_date(trade_date)
+    try:
+        from app.services.screen_report_store import load_screen_report_snapshot
+
+        snapshot = load_screen_report_snapshot(config, normalized)
+    except Exception:
+        snapshot = None
+    if snapshot is not None:
+        targets = snapshot.get("targets")
+        if isinstance(targets, list):
+            return parse_report_frame(pd.DataFrame(targets))
     path = config.reports_dir / f"screen_targets_{normalized}.csv"
     if path.exists():
         return parse_report_frame(pd.read_csv(path, dtype={"代码": str}))
+    if snapshot is not None:
+        # Snapshots created before target-pool persistence only contain final
+        # candidates.  Keep old dates readable, while callers can detect the
+        # narrower degraded scope from the explicit DataFrame attribute.
+        candidates = snapshot.get("candidates")
+        if isinstance(candidates, list):
+            frame = parse_report_frame(pd.DataFrame(candidates))
+            frame.attrs["scope_degraded"] = "candidates_fallback"
+            return frame
+        raise FileNotFoundError(f"Screen target pool for {normalized} was not persisted.")
     return load_screen_report(config, normalized)
 
 
@@ -503,6 +534,16 @@ def parse_trend_points(value: Any) -> list[dict[str, Any]]:
 def latest_screen_date(config: AppConfig, before: str | None = None) -> str | None:
     limit = normalize_trade_date(before) if before else None
     dates: list[str] = []
+    try:
+        from app.services.screen_report_store import list_screen_report_snapshot_dates
+
+        dates.extend(
+            date_value
+            for date_value in list_screen_report_snapshot_dates(config)
+            if limit is None or date_value < limit
+        )
+    except Exception:
+        pass
     for path in config.reports_dir.glob("screen_*.csv"):
         name = path.stem.replace("screen_", "")
         if len(name) == 8 and name.isdigit() and (limit is None or name < limit):

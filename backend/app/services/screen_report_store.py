@@ -101,6 +101,42 @@ def list_screen_report_snapshot_dates(config: AppConfig) -> list[str]:
     ]
 
 
+def load_screen_report_snapshots(
+    config: AppConfig,
+    start_date: str,
+    end_date: str,
+) -> dict[str, dict[str, Any]]:
+    """Load persisted screen reports for an inclusive date window.
+
+    Production timers persist reports in the database because the FaaS local
+    filesystem is ephemeral. Reading a whole window in one query keeps the
+    recommendation ledger fast and gives every runtime instance the same view.
+    """
+    normalized_start = normalize_report_date(start_date)
+    normalized_end = normalize_report_date(end_date)
+    if normalized_start > normalized_end:
+        normalized_start, normalized_end = normalized_end, normalized_start
+    ensure_schema(config)
+    with connect(config) as conn:
+        rows = execute(
+            conn,
+            """
+            SELECT trade_date, payload_json
+            FROM screen_report_snapshots
+            WHERE trade_date BETWEEN ? AND ?
+            ORDER BY trade_date
+            """,
+            (normalized_start, normalized_end),
+        ).fetchall()
+    snapshots: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        trade_date = str(row_value(row, "trade_date") or "")
+        payload = load_json(row_value(row, "payload_json"), {})
+        if is_report_date(trade_date) and isinstance(payload, dict):
+            snapshots[trade_date] = payload
+    return snapshots
+
+
 def screen_delivery_key(trade_date: str, chat_id: str) -> str:
     normalized = normalize_report_date(trade_date)
     value = f"daily-screen-v1|{normalized}|{chat_id.strip()}"

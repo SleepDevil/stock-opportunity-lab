@@ -197,6 +197,52 @@ def load_market_factor_snapshot(config: AppConfig, trade_date: str) -> MarketFac
     if not row:
         return None
 
+    return market_factor_snapshot_from_row(row, normalized)
+
+
+def load_market_factor_snapshots(
+    config: AppConfig,
+    start_date: str,
+    end_date: str,
+) -> dict[str, MarketFactorSnapshot]:
+    """Load an inclusive snapshot window with a single durable-store query."""
+    normalized_start = normalize_trade_date(start_date)
+    normalized_end = normalize_trade_date(end_date)
+    if normalized_start > normalized_end:
+        normalized_start, normalized_end = normalized_end, normalized_start
+    ensure_schema(config)
+    with connect(config) as conn:
+        rows = execute(
+            conn,
+            """
+            SELECT trade_date, captured_at, source, row_count, factor_coverage_json,
+                   payload_checksum, payload_json
+            FROM market_factor_snapshots
+            WHERE trade_date BETWEEN ? AND ?
+            ORDER BY trade_date
+            """,
+            (normalized_start, normalized_end),
+        ).fetchall()
+
+    snapshots: dict[str, MarketFactorSnapshot] = {}
+    for row in rows:
+        trade_date = str(row_value(row, "trade_date") or "")
+        try:
+            normalized = normalize_trade_date(trade_date)
+            snapshots[normalized] = market_factor_snapshot_from_row(row, normalized)
+        except Exception as exc:
+            # One corrupt daily payload must not hide the other valid trading
+            # days from a multi-day recommendation ledger.
+            LOGGER.warning(
+                "Stored market factor snapshot is invalid for %s: %s: %s",
+                trade_date,
+                exc.__class__.__name__,
+                exc,
+            )
+    return snapshots
+
+
+def market_factor_snapshot_from_row(row: Any, normalized: str) -> MarketFactorSnapshot:
     payload_json = str(row_value(row, "payload_json") or "")
     checksum = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
     if checksum != str(row_value(row, "payload_checksum") or ""):

@@ -154,12 +154,19 @@ class ScreenConfig:
 
 @dataclass
 class StrategyConfig:
+    # Bump this whenever execution semantics change.  The config hash is also
+    # shown in the ledger so parameter-only changes remain distinguishable.
+    recommendation_replay_version: str = "risk-exit-v1.0"
     entry_discount: float = 0.012
     entry_premium: float = 0.012
     breakout_premium: float = 0.026
     avoid_gap_up: float = 0.045
     stop_loss: float = 0.055
     take_profit: float = 0.085
+    max_holding_days: int = 10
+    commission_rate: float = 0.0003
+    slippage_rate: float = 0.0005
+    sell_stamp_tax_rate: float = 0.0005
     max_single_position_pct: float = 12.0
     risk_per_trade_pct: float = 1.0
 

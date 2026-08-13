@@ -265,6 +265,7 @@ class ScreenResponse(BaseModel):
     board_excluded_count: int = 0
     excluded_boards: list[str] = Field(default_factory=list)
     candidates: list[dict[str, Any]]
+    targets: list[dict[str, Any]] | None = None
     report_paths: dict[str, str]
     ai_payload: dict[str, Any]
     analysis: str
@@ -588,6 +589,9 @@ class RecommendationPerformanceResponse(BaseModel):
     period_end: str
     lookback_days: int
     benchmark: dict[str, Any]
+    strategy: dict[str, Any] | None = None
+    outcome_metrics: dict[str, Any] | None = None
+    optimization: dict[str, Any] | None = None
     entry_assumption: dict[str, Any]
     summary: dict[str, Any]
     calendar_days: list[dict[str, Any]]

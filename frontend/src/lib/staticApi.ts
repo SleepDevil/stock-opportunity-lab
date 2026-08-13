@@ -57,6 +57,10 @@ const strategyConfig = {
   avoid_gap_up: 0.045,
   stop_loss: 0.055,
   take_profit: 0.085,
+  max_holding_days: 10,
+  commission_rate: 0.0003,
+  slippage_rate: 0.0005,
+  sell_stamp_tax_rate: 0.0005,
   max_single_position_pct: 12,
   risk_per_trade_pct: 1
 };
@@ -257,7 +261,7 @@ function staticRecommendationPerformance(path: string): RecommendationPerformanc
   const lookbackDays = Math.max(1, Math.min(Number(url.searchParams.get('lookback_days') ?? 14), 90));
   const end = new Date(Date.UTC(Number(endDate.slice(0, 4)), Number(endDate.slice(4, 6)) - 1, Number(endDate.slice(6, 8))));
   const start = new Date(end);
-  start.setUTCDate(start.getUTCDate() - lookbackDays);
+  start.setUTCDate(start.getUTCDate() - (lookbackDays - 1));
   const dateKey = (value: Date) => `${value.getUTCFullYear()}${String(value.getUTCMonth() + 1).padStart(2, '0')}${String(value.getUTCDate()).padStart(2, '0')}`;
   const calendarDays: RecommendationPerformanceResponse['calendar_days'] = [];
   for (const cursor = new Date(start); cursor <= end; cursor.setUTCDate(cursor.getUTCDate() + 1)) {
@@ -281,12 +285,61 @@ function staticRecommendationPerformance(path: string): RecommendationPerformanc
     period_end: endDate,
     lookback_days: lookbackDays,
     benchmark: { code: '000001', name: '上证指数' },
+    strategy: {
+      version: 'static-v1',
+      name: '推荐兑现策略',
+      status: 'replay',
+      replay_mode: 'current_config_historical_replay',
+      effective_from: null,
+      config_hash: 'static-mirror',
+      execution_assumption: '静态镜像只展示策略结构，不生成真实成交或收益。',
+      parameters: {
+        entry: { timing: 'next_trade_day_open', limit_policy: 'sealed_limit_unfilled' },
+        exit: {
+          stop_loss_pct: strategyConfig.stop_loss,
+          take_profit_pct: strategyConfig.take_profit,
+          max_holding_sessions: 10,
+          t_plus_one: true,
+          same_bar_policy: 'stop_first',
+          gap_policy: 'next_tradable_open'
+        },
+        costs: { commission_bps: 3, slippage_bps: 5, stamp_tax_bps: 5 }
+      }
+    },
+    outcome_metrics: {
+      attempted_count: 0,
+      filled_count: 0,
+      blocked_count: 0,
+      closed_count: 0,
+      open_count: 0,
+      win_count: 0,
+      loss_count: 0,
+      realized_win_rate_pct: null,
+      average_win_pct: null,
+      average_loss_abs_pct: null,
+      payoff_ratio: null,
+      expectancy_pct: null,
+      expectancy_r: null,
+      profit_factor: null,
+      breakeven_win_rate_pct: null
+    },
+    optimization: {
+      status: 'insufficient_sample',
+      method: '静态镜像',
+      data_cutoff: endDate,
+      train_sample_count: 0,
+      out_of_sample_sample_count: 0,
+      baseline: null,
+      candidate: null,
+      reason: '静态镜像没有历史成交样本，优化不会静默改生产策略。',
+      promotion_checks: []
+    },
     entry_assumption: {
-      label: '次一交易日开盘等权买入',
+      label: '次一交易日开盘、封板保守成交、止盈止损退出',
       price_field: '未复权开盘价',
-      position_method: '每个推荐日内等权',
-      costs_included: false,
-      exit_rule: '持续持有至截至日最新可用价格',
+      position_method: '固定等权名义资金；未成交份额留现金',
+      costs_included: true,
+      exit_rule: 'T+1 后按止损、止盈或最长持有期退出',
       notes: [unavailableMessage]
     },
     summary: {

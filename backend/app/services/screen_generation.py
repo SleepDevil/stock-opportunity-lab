@@ -57,6 +57,7 @@ def generate_screen_response(
         board_excluded_count=result.board_excluded_count,
         excluded_boards=result.excluded_boards,
         candidates=json_records(result.candidates),
+        targets=json_records(result.targets),
         report_paths=result.report_paths,
         ai_payload=payload,
         analysis=explain(payload),

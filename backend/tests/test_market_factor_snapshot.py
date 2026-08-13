@@ -7,6 +7,7 @@ from app.config import AppConfig
 from app.services.market_factor_snapshot import (
     MarketFactorSnapshotQualityError,
     load_market_factor_snapshot,
+    load_market_factor_snapshots,
     load_or_fetch_market_factor_snapshot,
     save_market_factor_snapshot,
 )
@@ -116,3 +117,16 @@ def test_market_factor_snapshot_upserts_one_row_per_trade_date(tmp_path) -> None
     assert loaded.source == "second"
     assert loaded.row_count == 3_200
     assert loaded.frame.iloc[0]["最新价"] == 21.0
+
+
+def test_market_factor_snapshot_loads_inclusive_window(tmp_path) -> None:
+    config = AppConfig(data_dir=tmp_path, database_url=None)
+    for trade_date in ["20260803", "20260804", "20260805"]:
+        frame = complete_market_frame()
+        frame["最新价"] = float(trade_date[-2:])
+        save_market_factor_snapshot(config, trade_date, frame, source="scheduled_close")
+
+    snapshots = load_market_factor_snapshots(config, "20260804", "20260805")
+
+    assert list(snapshots) == ["20260804", "20260805"]
+    assert snapshots["20260804"].frame.iloc[0]["最新价"] == 4.0

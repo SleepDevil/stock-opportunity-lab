@@ -435,6 +435,7 @@ def screen_report(date: str) -> ScreenResponse:
             board_excluded_count=0,
             excluded_boards=[],
             candidates=json_records(candidates),
+            targets=json_records(targets),
             report_paths=screen_report_paths(trade_date),
             ai_payload=payload,
             analysis=explain(payload),
@@ -450,10 +451,16 @@ def recommendation_performance(
     refresh: bool = False,
 ) -> RecommendationPerformanceResponse:
     def build() -> dict[str, object]:
-        try:
-            index_snapshot = load_market_index(refresh=refresh)
-        except Exception:
-            index_snapshot = None
+        # The durable recommendation ledger is a close-price product.  Do not
+        # put the normal page load behind two real-time index requests (and the
+        # shared market-data lock); only an explicit refresh may supplement the
+        # persisted/index-history benchmark with a verified closing snapshot.
+        index_snapshot = None
+        if refresh:
+            try:
+                index_snapshot = load_market_index(refresh=True)
+            except Exception:
+                index_snapshot = None
         return build_recommendation_performance(
             provider=provider(),
             config=CONFIG,

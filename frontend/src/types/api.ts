@@ -588,6 +588,7 @@ export type ScreenResponse = {
   board_excluded_count?: number;
   excluded_boards?: string[];
   candidates: Candidate[];
+  targets?: Candidate[] | null;
   report_paths: Record<string, string>;
   ai_payload: unknown;
   analysis: string;
@@ -647,10 +648,123 @@ export type RecommendationCurvePoint = {
   date: string;
   close?: number | null;
   return_pct?: number | null;
+  strategy_return_pct?: number | null;
   daily_return_pct?: number | null;
   benchmark_return_pct?: number | null;
   excess_return_pct?: number | null;
   price_carried_forward?: boolean;
+  event?: 'entry' | 'stop_loss' | 'take_profit' | 'trailing_stop' | 'time_stop' | 'period_end' | string | null;
+  position_state?: 'cash' | 'open' | 'closed' | string | null;
+};
+
+export type RecommendationTradeExecution = {
+  order_date?: string | null;
+  status?: 'filled' | 'blocked' | 'pending' | 'not_triggered' | string | null;
+  fill_date?: string | null;
+  market_price?: number | null;
+  fill_price?: number | null;
+  reason_code?: string | null;
+  reason_label?: string | null;
+  limit_price?: number | null;
+  pending_reason?: string | null;
+  locked_all_day?: boolean | null;
+};
+
+export type RecommendationStrategyParameters = {
+  entry?: {
+    timing?: string | null;
+    limit_policy?: string | null;
+  } | null;
+  exit?: {
+    stop_loss_pct?: number | null;
+    take_profit_pct?: number | null;
+    max_holding_sessions?: number | null;
+    t_plus_one?: boolean | null;
+    same_bar_policy?: string | null;
+    gap_policy?: string | null;
+  } | null;
+  costs?: {
+    commission_bps?: number | null;
+    slippage_bps?: number | null;
+    stamp_tax_bps?: number | null;
+  } | null;
+};
+
+export type RecommendationStrategySnapshot = {
+  version?: string | null;
+  name?: string | null;
+  status?: 'production' | 'candidate' | 'retired' | string | null;
+  effective_from?: string | null;
+  config_hash?: string | null;
+  execution_assumption?: string | null;
+  replay_mode?: string | null;
+  parameters?: RecommendationStrategyParameters | null;
+};
+
+export type RecommendationOutcomeMetrics = {
+  attempted_count?: number | null;
+  filled_count?: number | null;
+  blocked_count?: number | null;
+  closed_count?: number | null;
+  open_count?: number | null;
+  win_count?: number | null;
+  loss_count?: number | null;
+  realized_win_rate_pct?: number | null;
+  average_win_pct?: number | null;
+  average_loss_abs_pct?: number | null;
+  payoff_ratio?: number | null;
+  expectancy_pct?: number | null;
+  expectancy_r?: number | null;
+  profit_factor?: number | null;
+  breakeven_win_rate_pct?: number | null;
+};
+
+export type RecommendationOptimizationVariant = RecommendationOutcomeMetrics & {
+  version?: string | null;
+  strategy_version?: string | null;
+  label?: string | null;
+  metrics?: RecommendationOutcomeMetrics | null;
+  parameters?: Record<string, unknown> | null;
+  max_drawdown_pct?: number | null;
+};
+
+export type RecommendationOptimizationCheck = {
+  key?: string | null;
+  label?: string | null;
+  passed?: boolean | null;
+  detail?: string | null;
+  actual?: unknown;
+  required?: unknown;
+};
+
+export type RecommendationOptimization = {
+  status?: string | null;
+  method?: string | null;
+  data_cutoff?: string | null;
+  train_sample_count?: number | null;
+  out_of_sample_sample_count?: number | null;
+  train_window?: RecommendationOptimizationWindow | null;
+  oos_window?: RecommendationOptimizationWindow | null;
+  baseline?: RecommendationOptimizationVariant | null;
+  candidate?: RecommendationOptimizationVariant | null;
+  reason?: string | null;
+  promotion_checks?: RecommendationOptimizationCheck[] | null;
+  history?: Array<{
+    version?: string | null;
+    status?: string | null;
+    data_cutoff?: string | null;
+    out_of_sample_sample_count?: number | null;
+    metrics?: RecommendationOutcomeMetrics | null;
+    reason?: string | null;
+  }> | null;
+};
+
+export type RecommendationOptimizationWindow = {
+  start?: string | null;
+  end?: string | null;
+  cohort_count?: number | null;
+  sample_count?: number | null;
+  report_dates?: string[] | null;
 };
 
 export type RecommendationPerformanceStock = {
@@ -665,13 +779,28 @@ export type RecommendationPerformanceStock = {
   plan_high?: number | null;
   avoid_gap_price?: number | null;
   opportunity_tag?: string | null;
-  status: 'tracked' | 'pending_entry' | 'no_entry_price';
+  status: 'tracked' | 'pending_entry' | 'no_entry_price' | 'entry_blocked';
   status_label: string;
+  strategy_version?: string | null;
+  position_status?: 'not_entered' | 'open' | 'closed' | string | null;
+  pnl_status?: 'none' | 'unrealized' | 'realized' | string | null;
+  entry_execution?: RecommendationTradeExecution | null;
+  exit_execution?: RecommendationTradeExecution | null;
   entry_price?: number | null;
   latest_price?: number | null;
   valuation_date?: string | null;
   latest_stock_price_date?: string | null;
   return_pct?: number | null;
+  gross_return_pct?: number | null;
+  net_return_pct?: number | null;
+  buy_hold_return_pct?: number | null;
+  pnl_r?: number | null;
+  mfe_pct?: number | null;
+  mae_pct?: number | null;
+  stop_price?: number | null;
+  take_profit_price?: number | null;
+  holding_days?: number | null;
+  path_ambiguity?: boolean | null;
   benchmark_return_pct?: number | null;
   excess_return_pct?: number | null;
   plan_status?: 'within_plan' | 'above_plan' | 'above_abandon' | 'below_plan' | 'unknown' | null;
@@ -687,11 +816,17 @@ export type RecommendationPerformanceCohort = {
   message: string;
   candidate_count: number;
   tracked_count: number;
+  filled_count?: number | null;
+  blocked_count?: number | null;
+  strategy_version?: string | null;
+  strategy_return_pct?: number | null;
+  strategy_excess_return_pct?: number | null;
   current_return_pct?: number | null;
   benchmark_return_pct?: number | null;
   excess_return_pct?: number | null;
   win_rate_pct?: number | null;
   curve: RecommendationCurvePoint[];
+  strategy_curve?: RecommendationCurvePoint[] | null;
   stocks: RecommendationPerformanceStock[];
 };
 
@@ -713,6 +848,9 @@ export type RecommendationPerformanceResponse = {
   period_end: string;
   lookback_days: number;
   benchmark: { code: string; name: string };
+  strategy?: RecommendationStrategySnapshot | null;
+  outcome_metrics?: RecommendationOutcomeMetrics | null;
+  optimization?: RecommendationOptimization | null;
   entry_assumption: {
     label: string;
     price_field: string;
