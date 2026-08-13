@@ -833,7 +833,7 @@ export type RecommendationPerformanceCohort = {
 export type RecommendationPerformanceCalendarDay = {
   date: string;
   weekday: string;
-  status: 'reported' | 'reported_empty' | 'missing_report' | 'market_closed';
+  status: 'reported' | 'reported_empty' | 'missing_report' | 'pending_close' | 'market_closed';
   status_label: string;
   candidate_count: number;
   tracked_count: number;

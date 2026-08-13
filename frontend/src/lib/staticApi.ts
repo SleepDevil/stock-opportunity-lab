@@ -266,17 +266,18 @@ function staticRecommendationPerformance(path: string): RecommendationPerformanc
   const calendarDays: RecommendationPerformanceResponse['calendar_days'] = [];
   for (const cursor = new Date(start); cursor <= end; cursor.setUTCDate(cursor.getUTCDate() + 1)) {
     const closed = cursor.getUTCDay() === 0 || cursor.getUTCDay() === 6;
+    const isPendingClose = !closed && dateKey(cursor) === fallbackEnd && endDate === fallbackEnd && today.getHours() < 15;
     calendarDays.push({
       date: dateKey(cursor),
       weekday: '日一二三四五六'[cursor.getUTCDay()],
-      status: closed ? 'market_closed' : 'missing_report',
-      status_label: closed ? '休市' : '未扫描',
+      status: closed ? 'market_closed' : isPendingClose ? 'pending_close' : 'missing_report',
+      status_label: closed ? '休市' : isPendingClose ? '待收盘' : '未扫描',
       candidate_count: 0,
       tracked_count: 0,
       return_pct: null
     });
   }
-  const tradingDayCount = calendarDays.filter((day) => day.status !== 'market_closed').length;
+  const tradingDayCount = calendarDays.filter((day) => ['reported', 'reported_empty', 'missing_report'].includes(day.status)).length;
   return {
     status: 'completed',
     requested_as_of_date: endDate,

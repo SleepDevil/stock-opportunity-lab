@@ -4584,6 +4584,7 @@ button {
 .audit-legend .reported::before { background: var(--performance-strategy); }
 .audit-legend .empty::before { background: var(--blue); }
 .audit-legend .missing::before { background: #a4afbd; }
+.audit-legend .pending::before { background: var(--performance-benchmark); }
 .audit-legend .closed::before { background: #e1e6ec; }
 
 .audit-tape {
@@ -4667,6 +4668,15 @@ button {
 .audit-day.reported_empty i {
   background: var(--blue);
   box-shadow: 0 0 0 4px rgb(39 104 201 / 10%);
+}
+
+.audit-day.pending_close {
+  background: #fff8e8;
+}
+
+.audit-day.pending_close i {
+  background: var(--performance-benchmark);
+  box-shadow: 0 0 0 4px rgb(213 132 14 / 12%);
 }
 
 .audit-day.market_closed {

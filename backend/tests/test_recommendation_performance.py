@@ -168,6 +168,43 @@ def test_recommendation_performance_keeps_missing_report_distinct_from_empty(tmp
     assert result["summary"]["missing_report_day_count"] == 3
 
 
+def test_calendar_pending_close_is_distinct_from_market_closed_and_coverage() -> None:
+    calendar = recommendation_performance.build_calendar_days(
+        period_start="20260808",
+        period_end="20260810",
+        reports={},
+        trading_dates={"20260810"},
+        cohorts=[],
+        pending_close_date="20260810",
+    )
+
+    assert [day["status"] for day in calendar] == [
+        "market_closed",
+        "market_closed",
+        "pending_close",
+    ]
+    assert calendar[-1]["status_label"] == "待收盘"
+    summary = recommendation_performance.summarize_performance([], calendar)
+    assert summary["trading_day_count"] == 0
+    assert summary["missing_report_day_count"] == 0
+    assert summary["report_coverage_pct"] is None
+
+
+def test_calendar_report_takes_precedence_over_pending_close() -> None:
+    report = pd.DataFrame([{"代码": "000001"}])
+    calendar = recommendation_performance.build_calendar_days(
+        period_start="20260810",
+        period_end="20260810",
+        reports={"20260810": report},
+        trading_dates=set(),
+        cohorts=[],
+        pending_close_date="20260810",
+    )
+
+    assert calendar[0]["status"] == "reported"
+    assert calendar[0]["status_label"] == "有推荐"
+
+
 def test_recommendation_performance_reads_scheduled_database_snapshots(tmp_path: Path) -> None:
     config = AppConfig(data_dir=tmp_path, database_url=None)
     save_screen_report_snapshot(

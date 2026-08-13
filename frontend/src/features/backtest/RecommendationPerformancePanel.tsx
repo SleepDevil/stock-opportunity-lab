@@ -174,6 +174,7 @@ export function RecommendationPerformancePanel() {
             <span className="reported">有推荐</span>
             <span className="empty">扫描为空</span>
             <span className="missing">未扫描</span>
+            <span className="pending">待收盘</span>
             <span className="closed">休市</span>
           </div>
         </Group>

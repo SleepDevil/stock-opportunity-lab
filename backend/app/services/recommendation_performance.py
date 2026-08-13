@@ -55,7 +55,8 @@ def build_recommendation_performance(
     market_index_snapshot: dict[str, Any] | None = None,
     progress: Callable[[int, str], None] | None = None,
 ) -> dict[str, Any]:
-    shanghai_today = datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y%m%d")
+    now_shanghai = datetime.now(ZoneInfo("Asia/Shanghai"))
+    shanghai_today = now_shanghai.strftime("%Y%m%d")
     requested_end = normalize_trade_date(end_date or shanghai_today)
     requested_end_date = datetime.strptime(requested_end, "%Y%m%d").date()
     lookback = max(1, min(int(lookback_days), 90))
@@ -167,6 +168,13 @@ def build_recommendation_performance(
         reports=reports,
         trading_dates=set(trading_dates),
         cohorts=cohorts,
+        pending_close_date=(
+            shanghai_today
+            if requested_end == shanghai_today
+            and now_shanghai.weekday() < 5
+            and now_shanghai.time() < datetime.strptime("15:00", "%H:%M").time()
+            else None
+        ),
     )
     summary = summarize_performance(cohorts, calendar_days)
     execution_outcomes = [
@@ -852,6 +860,7 @@ def build_calendar_days(
     reports: dict[str, pd.DataFrame],
     trading_dates: set[str],
     cohorts: list[dict[str, Any]],
+    pending_close_date: str | None = None,
 ) -> list[dict[str, Any]]:
     cohort_by_date = {cohort["report_date"]: cohort for cohort in cohorts}
     cursor = datetime.strptime(period_start, "%Y%m%d").date()
@@ -863,6 +872,9 @@ def build_calendar_days(
         if report is not None:
             status = "reported" if len(report) else "reported_empty"
             label = "有推荐" if len(report) else "扫描为空"
+        elif date_key == pending_close_date:
+            status = "pending_close"
+            label = "待收盘"
         elif date_key in trading_dates:
             status = "missing_report"
             label = "未扫描"
@@ -891,7 +903,10 @@ def summarize_performance(cohorts: list[dict[str, Any]], calendar_days: list[dic
         if stock.get("status") == "tracked" and stock.get("return_pct") is not None
     ]
     tracked_cohorts = [cohort for cohort in cohorts if cohort.get("status") == "tracked"]
-    trading_days = [day for day in calendar_days if day["status"] != "market_closed"]
+    trading_days = [
+        day for day in calendar_days
+        if day["status"] in {"reported", "reported_empty", "missing_report"}
+    ]
     report_days = [day for day in calendar_days if day["status"] in {"reported", "reported_empty"}]
     missing_days = [day["date"] for day in calendar_days if day["status"] == "missing_report"]
     returns = [stock.get("return_pct") for stock in tracked_stocks]
