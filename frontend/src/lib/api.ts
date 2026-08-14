@@ -64,12 +64,11 @@ const screenSubmitTimeoutMs = 15000;
 
 let clientAuthTokenPromise: { authUrl: string; promise: Promise<string> } | null = null;
 
-async function clientAuthToken(): Promise<string> {
-  const authUrl = resolveSyncApiUrl('/api/client-auth');
+async function clientAuthToken(authUrl: string, credentials: RequestCredentials): Promise<string> {
   if (clientAuthTokenPromise?.authUrl === authUrl) {
     return clientAuthTokenPromise.promise;
   }
-  const promise = fetch(authUrl, { credentials: syncApiRequestCredentials() })
+  const promise = fetch(authUrl, { credentials })
     .then(async (response) => {
       if (!response.ok) {
         throw new Error(response.statusText || '客户端鉴权失败');
@@ -88,8 +87,12 @@ async function clientAuthToken(): Promise<string> {
   return promise;
 }
 
-function requiresClientAuth(path: string): boolean {
+function usesSyncApi(path: string): boolean {
   return path.startsWith('/api/notification-settings') || path.startsWith('/api/watchlist');
+}
+
+function requiresClientAuth(path: string): boolean {
+  return usesSyncApi(path) || path === '/api/screen' || path.startsWith('/api/screen-report');
 }
 
 function readableHttpError(response: Response, message: string): Error {
@@ -107,17 +110,20 @@ async function request<T>(path: string, init?: RequestInit, retryClientAuth = tr
   if (isStaticMode()) {
     return staticRequest<T>(path, init);
   }
+  const syncRequest = usesSyncApi(path);
   const protectedRequest = requiresClientAuth(path);
+  const requestCredentials = syncRequest ? syncApiRequestCredentials() : apiRequestCredentials();
   const nextInit: RequestInit = {
     ...init,
-    credentials: init?.credentials ?? (protectedRequest ? syncApiRequestCredentials() : apiRequestCredentials())
+    credentials: init?.credentials ?? requestCredentials
   };
   if (protectedRequest) {
     const nextHeaders = new Headers(init?.headers);
-    nextHeaders.set(clientAuthHeader, await clientAuthToken());
+    const authUrl = syncRequest ? resolveSyncApiUrl('/api/client-auth') : resolveApiUrl('/api/client-auth');
+    nextHeaders.set(clientAuthHeader, await clientAuthToken(authUrl, requestCredentials));
     nextInit.headers = nextHeaders;
   }
-  const response = await fetch(protectedRequest ? resolveSyncApiUrl(path) : resolveApiUrl(path), nextInit);
+  const response = await fetch(syncRequest ? resolveSyncApiUrl(path) : resolveApiUrl(path), nextInit);
   if (response.status === 403 && retryClientAuth && protectedRequest) {
     clientAuthTokenPromise = null;
     return request<T>(path, init, false);

@@ -379,7 +379,11 @@ def quant_backtest(request: QuantBacktestRequest, response: Response) -> TaskAcc
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@app.post("/api/screen", response_model=ScreenResponse | TaskAcceptedResponse)
+@app.post(
+    "/api/screen",
+    response_model=ScreenResponse | TaskAcceptedResponse,
+    dependencies=[Depends(require_frontend_client)],
+)
 def screen(request: ScreenRequest, response: Response) -> ScreenResponse | TaskAcceptedResponse:
     try:
         trade_date = normalize_trade_date(request.date)
@@ -391,7 +395,11 @@ def screen(request: ScreenRequest, response: Response) -> ScreenResponse | TaskA
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@app.get("/api/screen-reports", response_model=ScreenReportsResponse)
+@app.get(
+    "/api/screen-reports",
+    response_model=ScreenReportsResponse,
+    dependencies=[Depends(require_frontend_client)],
+)
 def screen_reports() -> ScreenReportsResponse:
     dates: list[str] = []
     for path in CONFIG.reports_dir.glob("screen_*.csv"):
@@ -408,7 +416,11 @@ def screen_reports() -> ScreenReportsResponse:
     return ScreenReportsResponse(dates=dates, latest=dates[-1] if dates else None)
 
 
-@app.get("/api/screen-report", response_model=ScreenResponse)
+@app.get(
+    "/api/screen-report",
+    response_model=ScreenResponse,
+    dependencies=[Depends(require_frontend_client)],
+)
 def screen_report(date: str) -> ScreenResponse:
     try:
         trade_date = normalize_trade_date(date)

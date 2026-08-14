@@ -54,7 +54,7 @@ flowchart LR
 | 自我复盘 | `backend/app/services/evolution.py` | 编排最近盘后报告 -> 次日回测 -> 学习 -> 优化建议 |
 | 公众号知识 | `backend/app/services/wechat_knowledge.py` | 保存公众号来源、导入文章、提取关键知识 |
 | AI 解释 | `backend/app/services/ai.py` | 构造 AI payload，并生成规则化解释 |
-| 客户端鉴权 | `backend/app/services/client_auth.py` | 为通知设置接口签发并校验 CSRF/HMAC token、同源来源和浏览器请求来源 |
+| 客户端鉴权 | `backend/app/services/client_auth.py` | 为报告与通知接口签发并校验 CSRF/HMAC token、同源来源和浏览器请求来源 |
 | 前端工作台 | `frontend/src/App.tsx` | 页面路由、状态编排、策略进化 UI |
 | 运行时适配 | `frontend/src/lib/runtime.ts` | Web 保持同源 API；桌面构建连接本机 sidecar 并处理启动错误态 |
 | 桌面壳 | `src-tauri/` | Tauri 窗口、单实例、窗口状态、日志和 Python sidecar 生命周期 |
@@ -300,7 +300,7 @@ flowchart LR
 - 网页可以同源访问 `/api`；生产 Tauri 客户端通过构建变量连接部署者提供的 HTTPS API。
 - CI/CD 供应商、生产域名和账户标识不进入公开仓库，由部署环境单独配置。
 
-## 10. 公网安全与通知鉴权
+## 10. 公网安全与客户端鉴权
 
 可选通知能力由后端直接调用飞书 OpenAPI 完成：
 
@@ -313,10 +313,10 @@ flowchart LR
 由于浏览器前端无法安全保存真正的服务密钥，“只有自己的前端才能调用”采用同源浏览器请求边界，而不是把 secret 下发给前端：
 
 - `GET /api/client-auth` 由后端签发 HMAC CSRF token，并设置 `HttpOnly`、`SameSite=Lax` 的 `stock_lab_csrf` cookie。
-- 前端请求封装会在访问 `/api/notification-settings*` 时自动领取 token，并通过 `X-Stock-Lab-CSRF` header 带回。
+- 前端请求封装会在访问报告、通知设置和自选同步接口时自动领取 token，并通过 `X-Stock-Lab-CSRF` header 带回。
 - 后端要求 header token 与 cookie token 一致，并使用 `STOCK_LAB_CLIENT_AUTH_SECRET` 验证签名和有效期。
 - 通知设置写入和测试发送还要求 `Origin`/`Referer` 属于部署同源或本地开发前端，并拒绝 `Sec-Fetch-Site: cross-site` 的浏览器请求。
-- 当前受保护范围包括 `GET/PUT /api/notification-settings` 和 `POST /api/notification-settings/test`。后台任务完成后的实际发信仍由服务端内部调用 `send_feishu_tip()`，不暴露公网收件人参数。
+- 当前受保护范围包括 `/api/screen*`、`/api/notification-settings*` 和 `/api/watchlist*`。后台任务完成后的实际发信仍由服务端内部调用 `send_feishu_tip()`，不暴露公网收件人参数。
 
 这个机制能阻断外部网页的跨站诱导、普通跨域脚本调用和无 token 的直接调用；它不是多用户身份认证。若后续要把服务开放给多人或保护全部投研数据，应在此基础上增加登录态、用户会话、速率限制和审计日志。
 
@@ -324,11 +324,12 @@ flowchart LR
 
 | API | 方法 | 作用 |
 | --- | --- | --- |
-| `/api/client-auth` | GET | 签发前端访问通知设置接口所需的 CSRF/HMAC token |
+| `/api/client-auth` | GET | 签发受保护前端接口所需的 CSRF/HMAC token |
 | `/api/notification-settings` | GET/PUT | 读取或保存账户邮箱、通知与板块偏好，要求客户端鉴权 |
 | `/api/notification-settings/test` | POST | 发送飞书测试通知，要求客户端鉴权 |
-| `/api/screen` | POST | 盘后扫描并生成候选 |
-| `/api/screen-report` | GET | 读取历史扫描报告 |
+| `/api/screen` | POST | 盘后扫描并生成候选，要求客户端鉴权 |
+| `/api/screen-reports` | GET | 读取历史扫描报告日期，要求客户端鉴权 |
+| `/api/screen-report` | GET | 读取历史扫描报告，要求客户端鉴权 |
 | `/api/backtest` | POST | 手动验证某次推荐在实际日的表现 |
 | `/api/evolution-cycle` | POST | 自动选择最近盘后报告并完成回测、学习、优化建议 |
 | `/api/learning-summary` | GET | 读取学习摘要 |
@@ -354,7 +355,7 @@ flowchart LR
 - 策略优化器会基于亏损/止损样本提出保守参数实验，并保存稳定实验版本。
 - 后续回测会记录 baseline/proposed 的实验结果对照。
 - 自我复盘周期会选择最近盘后报告并返回回测和优化证据。
-- 通知设置接口要求签名 CSRF token、可信前端来源和 cookie/header 双提交。
+- 报告、通知设置和自选接口要求签名 CSRF token；Web 使用 cookie/header 双提交，Tauri 使用受信任 origin 与签名 header。
 
 前端验证依赖：
 
