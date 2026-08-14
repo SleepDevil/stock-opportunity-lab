@@ -69,6 +69,7 @@ const now = () => new Date().toISOString();
 
 const config: AppConfig = {
   data_dir: 'static-github-pages',
+  access_key_configured: false,
   ai: {
     configured: false,
     provider: 'rules_fallback',
@@ -384,7 +385,6 @@ export async function staticRequest<T>(path: string, init?: RequestInit): Promis
   }
 
   const payloads: Record<string, unknown> = {
-    '/api/client-auth': { csrf_token: 'static-github-pages' },
     '/api/config': config,
     '/api/learning-summary': learningSummary,
     '/api/strategy-optimization': strategyOptimization(),

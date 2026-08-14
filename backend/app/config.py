@@ -4,7 +4,6 @@ from dataclasses import asdict, dataclass, field
 import math
 import os
 from pathlib import Path
-import secrets
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
@@ -26,7 +25,6 @@ def load_project_dotenv(project_root: Path = PROJECT_ROOT) -> None:
 
 
 load_project_dotenv()
-PROCESS_CLIENT_AUTH_SECRET = secrets.token_urlsafe(32)
 
 
 def default_data_dir() -> Path:
@@ -63,8 +61,9 @@ def default_watchlist_commentary_platform_url() -> str | None:
     return value or None
 
 
-def default_client_auth_secret() -> str:
-    return os.getenv("STOCK_LAB_CLIENT_AUTH_SECRET") or os.getenv("STOCK_LAB_FEISHU_APP_SECRET") or PROCESS_CLIENT_AUTH_SECRET
+def default_access_key() -> str | None:
+    value = os.getenv("STOCK_LAB_ACCESS_KEY", "").strip()
+    return value or None
 
 
 def default_ai_provider() -> str:
@@ -181,7 +180,7 @@ class AppConfig:
     watchlist_commentary_feishu_enabled: bool = field(default_factory=default_watchlist_commentary_feishu_enabled)
     watchlist_commentary_feishu_chat_id: str | None = field(default_factory=default_watchlist_commentary_feishu_chat_id)
     watchlist_commentary_platform_url: str | None = field(default_factory=default_watchlist_commentary_platform_url)
-    client_auth_secret: str = field(default_factory=default_client_auth_secret)
+    access_key: str | None = field(default_factory=default_access_key)
     ai_provider: str = field(default_factory=default_ai_provider)
     ai_command: str | None = field(default_factory=default_ai_command)
     zhipu_api_key: str | None = field(default_factory=default_zhipu_api_key)
@@ -215,7 +214,8 @@ class AppConfig:
         data["database_url"] = mask_database_url(self.database_url) if self.database_url else str(self.default_sqlite_database_path)
         data["feishu_app_secret"] = "***" if self.feishu_app_secret else None
         data.pop("watchlist_commentary_feishu_chat_id", None)
-        data["client_auth_secret"] = "***"
+        data.pop("access_key", None)
+        data["access_key_configured"] = len((self.access_key or "").strip()) >= 32
         data["ai_command"] = "***" if self.ai_command else None
         data["zhipu_api_key"] = "***" if self.zhipu_api_key else None
         backend = self.resolved_ai_backend

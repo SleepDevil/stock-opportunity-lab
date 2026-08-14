@@ -20,7 +20,7 @@ services:
         sync: false
       - key: STOCK_LAB_WATCHLIST_COMMENTARY_PLATFORM_URL
         sync: false
-      - key: STOCK_LAB_CLIENT_AUTH_SECRET
+      - key: STOCK_LAB_ACCESS_KEY
         sync: false
       - key: STOCK_LAB_AI_PROVIDER
         value: auto

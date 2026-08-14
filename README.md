@@ -46,7 +46,7 @@ npm run dev:core
 ```text
 STOCK_LAB_DATA_DIR=/path/to/data
 STOCK_LAB_DATABASE_URL=postgresql://USER:PASSWORD@HOST/DB?sslmode=require
-STOCK_LAB_CLIENT_AUTH_SECRET=replace-with-a-random-secret
+STOCK_LAB_ACCESS_KEY=replace-with-at-least-32-random-characters
 STOCK_LAB_FEISHU_APP_ID=optional-app-id
 STOCK_LAB_FEISHU_APP_SECRET=optional-app-secret
 STOCK_LAB_AI_PROVIDER=auto
@@ -57,6 +57,8 @@ STOCK_LAB_AI_COMMAND=optional-legacy-command
 ```
 
 未配置数据库连接时使用 `data/stock_lab.sqlite3`。本地开发命令默认忽略远程数据库地址，避免误连生产数据。
+
+报告、通知设置和自选同步接口要求 `STOCK_LAB_ACCESS_KEY`。Web/桌面客户端首次访问时由用户手工输入，密钥仅保存在当前浏览器会话，不会写入前端 Bundle；服务端未配置或密钥少于 32 位时会拒绝所有受保护请求。
 
 自选锐评默认在检测到 `STOCK_LAB_ZHIPU_API_KEY` 后调用智谱 `glm-4.7-flash`；未配置密钥、请求超时或模型限流时自动使用行情规则代笔。`STOCK_LAB_AI_PROVIDER=command` 可继续使用旧的命令适配器，`rules` 可强制关闭模型调用。API Key 只在后端读取，不会进入前端 Bundle、接口响应或日志。
 

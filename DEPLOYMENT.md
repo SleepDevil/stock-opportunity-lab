@@ -4,6 +4,8 @@ Stock Opportunity Lab 可以部署到任意支持 Docker、HTTPS 和持久化环
 
 ## Docker
 
+先生成至少 32 位的随机访问密钥，例如 `openssl rand -hex 32`，并通过部署平台 Secret 注入；不要把生成结果提交到仓库。
+
 构建并运行：
 
 ```bash
@@ -11,7 +13,7 @@ docker build -t stock-opportunity-lab .
 docker run --rm \
   -p 8000:8000 \
   -v stock-lab-data:/data \
-  -e STOCK_LAB_CLIENT_AUTH_SECRET=replace-with-a-random-secret \
+  -e STOCK_LAB_ACCESS_KEY=replace-with-at-least-32-random-characters \
   stock-opportunity-lab
 ```
 
@@ -34,7 +36,7 @@ curl -fsS http://127.0.0.1:8000/api/health
 | `PORT` | HTTP 端口，默认 `8000` |
 | `STOCK_LAB_DATA_DIR` | 本地缓存与 SQLite 数据目录 |
 | `STOCK_LAB_DATABASE_URL` | 可选 Postgres 连接串 |
-| `STOCK_LAB_CLIENT_AUTH_SECRET` | CSRF/HMAC 签名密钥，生产环境必须使用随机值 |
+| `STOCK_LAB_ACCESS_KEY` | 受保护 API 的共享 Bearer 密钥，至少 32 位并由 Secret 管理 |
 | `STOCK_LAB_FEISHU_APP_ID` | 可选通知应用 ID |
 | `STOCK_LAB_FEISHU_APP_SECRET` | 可选通知应用密钥 |
 | `STOCK_LAB_WATCHLIST_COMMENTARY_FEISHU_ENABLED` | 是否默认开启自选锐评群推送；开启后 15:00 的量化选股卡片也发送到同一群；`true`/`false` |
@@ -69,8 +71,9 @@ curl -fsS http://127.0.0.1:8000/api/health
 
 1. `/api/health` 返回 `ready`。
 2. `/`、`/backtest`、`/alerts` 等前端路由正常回退到 `index.html`。
-3. `/api/config` 对数据库密码、通知密钥和客户端鉴权密钥只返回掩码。
-4. HTTPS、CORS、持久化存储和备份策略符合部署环境要求。
+3. 未携带 `Authorization` 访问 `/api/screen-reports` 返回 `401`，携带正确的 `Bearer` 密钥后返回 `200`。
+4. `/api/config` 不返回访问密钥，只返回 `access_key_configured` 状态。
+5. HTTPS、CORS、持久化存储和备份策略符合部署环境要求。
 
 ## 桌面构建
 

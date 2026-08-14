@@ -15,6 +15,9 @@ from app.services import zhipu_ai
 from app.services.zhipu_ai import ZhipuAIError
 
 
+TEST_ACCESS_KEY = "test-access-key-0123456789abcdef"
+
+
 @pytest.fixture(autouse=True)
 def disable_external_ai(monkeypatch) -> None:
     monkeypatch.delenv("STOCK_LAB_AI_COMMAND", raising=False)
@@ -24,6 +27,7 @@ def disable_external_ai(monkeypatch) -> None:
     monkeypatch.delenv("STOCK_LAB_DATABASE_URL", raising=False)
     safe_config = AppConfig(
         database_url=None,
+        access_key=TEST_ACCESS_KEY,
         ai_provider="auto",
         ai_command=None,
         zhipu_api_key=None,
@@ -81,12 +85,10 @@ def sample_request() -> dict[str, object]:
 
 
 def signed_post(client: TestClient, path: str, payload: dict[str, object]):
-    origin = "http://localhost:5173"
-    token = client.get("/api/client-auth", headers={"Origin": origin}).json()["csrf_token"]
     return client.post(
         path,
         json=payload,
-        headers={"Origin": origin, "X-Stock-Lab-CSRF": token},
+        headers={"Authorization": f"Bearer {TEST_ACCESS_KEY}"},
     )
 
 
@@ -651,11 +653,11 @@ def test_watchlist_commentary_api_accepts_more_than_eight_stocks() -> None:
 def test_watchlist_commentary_api_requires_client_auth() -> None:
     response = TestClient(main.app).post("/api/watchlist-commentary", json=sample_request())
 
-    assert response.status_code == 403
+    assert response.status_code == 401
 
 
 def test_watchlist_commentary_sends_configured_feishu_card(tmp_path, monkeypatch) -> None:
-    config = AppConfig(data_dir=tmp_path, database_url=None, client_auth_secret="client-secret")
+    config = AppConfig(data_dir=tmp_path, database_url=None, access_key=TEST_ACCESS_KEY)
     save_notification_settings(
         config,
         "trader@example.com",
@@ -691,7 +693,7 @@ def test_watchlist_commentary_sends_configured_feishu_card(tmp_path, monkeypatch
 
 
 def test_watchlist_commentary_does_not_send_outside_trading_session(tmp_path, monkeypatch) -> None:
-    config = AppConfig(data_dir=tmp_path, database_url=None, client_auth_secret="client-secret")
+    config = AppConfig(data_dir=tmp_path, database_url=None, access_key=TEST_ACCESS_KEY)
     save_notification_settings(
         config,
         "trader@example.com",
@@ -716,7 +718,7 @@ def test_watchlist_commentary_does_not_send_outside_trading_session(tmp_path, mo
 
 
 def test_manual_watchlist_commentary_sends_latest_snapshot_outside_trading_session(tmp_path, monkeypatch) -> None:
-    config = AppConfig(data_dir=tmp_path, database_url=None, client_auth_secret="client-secret")
+    config = AppConfig(data_dir=tmp_path, database_url=None, access_key=TEST_ACCESS_KEY)
     save_notification_settings(
         config,
         "trader@example.com",

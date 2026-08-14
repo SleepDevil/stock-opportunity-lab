@@ -6,7 +6,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from app.config import CONFIG
-from app.services.client_auth import ClientAuthError, require_client_auth
+from app.services.client_auth import (
+    ClientAuthConfigurationError,
+    ClientAuthError,
+    require_client_auth,
+)
 from app.services.daily_screen_schedule import run_manual_daily_close_screen
 from app.services.learning_store import ensure_schema
 from app.services.watchlist_schedule import (
@@ -48,8 +52,14 @@ class StorageHealthResponse(BaseModel):
 def require_web_client(request: Request) -> None:
     try:
         require_client_auth(request, CONFIG)
+    except ClientAuthConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ClientAuthError as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=401,
+            detail=str(exc),
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc
 
 
 @router.get(

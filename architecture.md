@@ -54,7 +54,7 @@ flowchart LR
 | 自我复盘 | `backend/app/services/evolution.py` | 编排最近盘后报告 -> 次日回测 -> 学习 -> 优化建议 |
 | 公众号知识 | `backend/app/services/wechat_knowledge.py` | 保存公众号来源、导入文章、提取关键知识 |
 | AI 解释 | `backend/app/services/ai.py` | 构造 AI payload，并生成规则化解释 |
-| 客户端鉴权 | `backend/app/services/client_auth.py` | 为报告与通知接口签发并校验 CSRF/HMAC token、同源来源和浏览器请求来源 |
+| 客户端鉴权 | `backend/app/services/client_auth.py` | 校验报告、通知和自选接口的高熵 Bearer 访问密钥 |
 | 前端工作台 | `frontend/src/App.tsx` | 页面路由、状态编排、策略进化 UI |
 | 运行时适配 | `frontend/src/lib/runtime.ts` | Web 保持同源 API；桌面构建连接本机 sidecar 并处理启动错误态 |
 | 桌面壳 | `src-tauri/` | Tauri 窗口、单实例、窗口状态、日志和 Python sidecar 生命周期 |
@@ -308,23 +308,21 @@ flowchart LR
 2. 用账户邮箱调用飞书通讯录接口换取 `open_id`。
 3. 用机器人向该 `open_id` 发送文本通知。
 
-机器人 app secret 只能存在于部署环境变量或本地 `.env`，不能进入前端 bundle、文档示例或 Git 仓库。`/api/config` 对 `feishu_app_secret` 和 `client_auth_secret` 只返回掩码。
+机器人 app secret 和访问密钥只能存在于部署环境变量或本地 `.env`，不能进入前端 bundle、文档示例或 Git 仓库。`/api/config` 不返回访问密钥，只暴露 `access_key_configured` 状态。
 
-由于浏览器前端无法安全保存真正的服务密钥，“只有自己的前端才能调用”采用同源浏览器请求边界，而不是把 secret 下发给前端：
+受保护接口使用共享 Bearer 访问密钥：
 
-- `GET /api/client-auth` 由后端签发 HMAC CSRF token，并设置 `HttpOnly`、`SameSite=Lax` 的 `stock_lab_csrf` cookie。
-- 前端请求封装会在访问报告、通知设置和自选同步接口时自动领取 token，并通过 `X-Stock-Lab-CSRF` header 带回。
-- 后端要求 header token 与 cookie token 一致，并使用 `STOCK_LAB_CLIENT_AUTH_SECRET` 验证签名和有效期。
-- 通知设置写入和测试发送还要求 `Origin`/`Referer` 属于部署同源或本地开发前端，并拒绝 `Sec-Fetch-Site: cross-site` 的浏览器请求。
+- 服务端从 `STOCK_LAB_ACCESS_KEY` 读取至少 32 位的高熵密钥；未配置或长度不足时 fail closed，返回 `503`。
+- Web/桌面客户端首次访问受保护接口时要求用户手工输入密钥，仅保存到当前会话的 `sessionStorage`，不自动签发、不写入前端 Bundle。
+- 前端通过标准 `Authorization: Bearer <key>` header 发送密钥；缺失或校验失败返回 `401`。
 - 当前受保护范围包括 `/api/screen*`、`/api/notification-settings*` 和 `/api/watchlist*`。后台任务完成后的实际发信仍由服务端内部调用 `send_feishu_tip()`，不暴露公网收件人参数。
 
-这个机制能阻断外部网页的跨站诱导、普通跨域脚本调用和无 token 的直接调用；它不是多用户身份认证。若后续要把服务开放给多人或保护全部投研数据，应在此基础上增加登录态、用户会话、速率限制和审计日志。
+共享密钥适合单人或小范围部署，不提供用户级权限隔离。多人服务应升级为公司 SSO、服务端 Session、速率限制和审计日志。
 
 ## 11. 关键 API
 
 | API | 方法 | 作用 |
 | --- | --- | --- |
-| `/api/client-auth` | GET | 签发受保护前端接口所需的 CSRF/HMAC token |
 | `/api/notification-settings` | GET/PUT | 读取或保存账户邮箱、通知与板块偏好，要求客户端鉴权 |
 | `/api/notification-settings/test` | POST | 发送飞书测试通知，要求客户端鉴权 |
 | `/api/screen` | POST | 盘后扫描并生成候选，要求客户端鉴权 |
@@ -355,7 +353,7 @@ flowchart LR
 - 策略优化器会基于亏损/止损样本提出保守参数实验，并保存稳定实验版本。
 - 后续回测会记录 baseline/proposed 的实验结果对照。
 - 自我复盘周期会选择最近盘后报告并返回回测和优化证据。
-- 报告、通知设置和自选接口要求签名 CSRF token；Web 使用 cookie/header 双提交，Tauri 使用受信任 origin 与签名 header。
+- 报告、通知设置和自选接口要求正确的 Bearer 访问密钥；伪造 Cookie、旧 CSRF header 和错误密钥均被拒绝。
 
 前端验证依赖：
 
@@ -370,4 +368,4 @@ flowchart LR
 2. 定时自我复盘：每天收盘后自动运行 `/api/evolution-cycle`，并发送复盘摘要。
 3. 统计显著性：不要只看胜率，还要看样本量、盈亏比、最大回撤、市场环境分层和置信区间。
 4. 数据备份：为外部 Postgres 增加定期导出和恢复流程。
-5. 云端安全：在当前客户端 CSRF/同源保护之上增加登录、访问控制、速率限制和敏感操作审计，避免公开服务暴露个人数据或通知配置。
+5. 云端安全：多人使用时把共享访问密钥升级为公司 SSO、用户会话、速率限制和敏感操作审计。

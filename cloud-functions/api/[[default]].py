@@ -68,9 +68,6 @@ class handler(BaseHTTPRequestHandler):
         if path == "/config":
             self._json(public_config())
             return
-        if path == "/client-auth":
-            self._json({"csrf_token": "edgeone-light-backend"})
-            return
         if path == "/learning-summary":
             self._json(empty_learning_summary())
             return
@@ -133,7 +130,7 @@ def public_config() -> dict[str, object]:
         "database_url": mask_database_url(database_url) if database_url else str(DATA_DIR / "stock_lab.sqlite3"),
         "feishu_app_id": os.getenv("STOCK_LAB_FEISHU_APP_ID", ""),
         "feishu_app_secret": "***" if os.getenv("STOCK_LAB_FEISHU_APP_SECRET") else None,
-        "client_auth_secret": "***",
+        "access_key_configured": len(os.getenv("STOCK_LAB_ACCESS_KEY", "").strip()) >= 32,
         "ai": {
             "configured": False,
             "provider": "rules_fallback",

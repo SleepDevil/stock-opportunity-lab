@@ -1488,6 +1488,7 @@ export type WatchlistCommentaryResponse = {
 
 export type AppConfig = {
   data_dir: string;
+  access_key_configured?: boolean;
   screen: Record<string, unknown>;
   strategy: Record<string, unknown>;
   ai?: {

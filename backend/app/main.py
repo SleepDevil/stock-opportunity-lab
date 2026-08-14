@@ -68,11 +68,8 @@ from app.models import (
 from app.services.ai import build_payload, explain
 from app.services.backtest import run_backtest
 from app.services.client_auth import (
-    CSRF_COOKIE_NAME,
+    ClientAuthConfigurationError,
     ClientAuthError,
-    issue_csrf_token,
-    is_https_request,
-    reject_untrusted_origin_if_present,
     require_client_auth,
 )
 from app.services.crisis_monitor import run_crisis_monitor
@@ -240,27 +237,14 @@ def get_config():
 def require_frontend_client(request: Request) -> None:
     try:
         require_client_auth(request, CONFIG)
+    except ClientAuthConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ClientAuthError as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
-
-
-@app.get("/api/client-auth")
-def get_client_auth(request: Request, response: Response) -> dict[str, str]:
-    try:
-        reject_untrusted_origin_if_present(request)
-    except ClientAuthError as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
-    token = issue_csrf_token(CONFIG)
-    response.set_cookie(
-        CSRF_COOKIE_NAME,
-        token,
-        httponly=True,
-        secure=is_https_request(request),
-        samesite="lax",
-        max_age=12 * 60 * 60,
-        path="/",
-    )
-    return {"csrf_token": token}
+        raise HTTPException(
+            status_code=401,
+            detail=str(exc),
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc
 
 
 @app.get("/api/notification-settings", response_model=NotificationSettings, dependencies=[Depends(require_frontend_client)])
