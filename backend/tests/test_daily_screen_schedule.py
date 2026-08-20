@@ -286,22 +286,24 @@ def test_screen_report_api_reads_database_snapshot_without_files(tmp_path, monke
         "/api/screen-reports",
         headers={"Cookie": "aigc_user_id=1; monitor_huoshan_web_id=1; upgrade_to_ida=true"},
     )
-    forged_bearer_reports = client.get(
+    forged_token_reports = client.get(
         "/api/screen-reports",
-        headers={"Authorization": "Bearer forged-access-key"},
+        headers={"X-Stock-Lab-CSRF": "forged-token"},
     )
     unauthorized_report = client.get("/api/screen-report?date=20260801")
     unauthorized_screen = client.post("/api/screen", json={})
 
-    auth_headers = {"Authorization": f"Bearer {TEST_ACCESS_KEY}"}
+    origin = "http://localhost:5173"
+    token = client.get("/api/client-auth", headers={"Origin": origin}).json()["csrf_token"]
+    auth_headers = {"Origin": origin, "X-Stock-Lab-CSRF": token}
     reports = client.get("/api/screen-reports", headers=auth_headers)
     report = client.get("/api/screen-report?date=20260801", headers=auth_headers)
 
-    assert unauthorized_reports.status_code == 401
-    assert forged_cookie_reports.status_code == 401
-    assert forged_bearer_reports.status_code == 401
-    assert unauthorized_report.status_code == 401
-    assert unauthorized_screen.status_code == 401
+    assert unauthorized_reports.status_code == 403
+    assert forged_cookie_reports.status_code == 403
+    assert forged_token_reports.status_code == 403
+    assert unauthorized_report.status_code == 403
+    assert unauthorized_screen.status_code == 403
     assert reports.status_code == 200
     assert reports.json() == {"dates": ["20260801"], "latest": "20260801"}
     assert report.status_code == 200

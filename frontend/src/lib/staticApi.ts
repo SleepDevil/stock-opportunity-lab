@@ -385,6 +385,7 @@ export async function staticRequest<T>(path: string, init?: RequestInit): Promis
   }
 
   const payloads: Record<string, unknown> = {
+    '/api/client-auth': { csrf_token: 'static-github-pages' },
     '/api/config': config,
     '/api/learning-summary': learningSummary,
     '/api/strategy-optimization': strategyOptimization(),

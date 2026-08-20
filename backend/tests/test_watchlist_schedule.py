@@ -24,22 +24,13 @@ def clean_schedule_environment(monkeypatch) -> None:
     monkeypatch.delenv(watchlist_schedule.TIMER_NAME_ENV, raising=False)
 
 
-def access_key_headers() -> dict[str, str]:
-    return {"Authorization": f"Bearer {TEST_ACCESS_KEY}"}
-
-
 def test_server_watchlist_roundtrip_and_default(tmp_path, monkeypatch) -> None:
     config = AppConfig(data_dir=tmp_path, database_url=None, access_key=TEST_ACCESS_KEY)
     monkeypatch.setattr(main, "CONFIG", config)
     monkeypatch.setattr(watchlist_router, "CONFIG", config)
     monkeypatch.setenv(watchlist_schedule.DEFAULT_WATCHLIST_ENV, watchlist_schedule.dump_json(DEFAULT_STOCKS))
     client = TestClient(main.app)
-    headers = access_key_headers()
-
-    initial = client.get(
-        "/api/watchlist?user_email=trader%40example.com",
-        headers=headers,
-    )
+    initial = client.get("/api/watchlist?user_email=trader%40example.com")
 
     assert initial.status_code == 200
     assert initial.json()["source"] == "deployment_default"
@@ -47,7 +38,6 @@ def test_server_watchlist_roundtrip_and_default(tmp_path, monkeypatch) -> None:
 
     saved = client.put(
         "/api/watchlist",
-        headers=headers,
         json={
             "user_email": "Trader@Example.com",
             "stocks": [{"code": "603986", "name": "兆易创新"}],
@@ -75,7 +65,6 @@ def test_server_watchlist_accepts_more_than_eight_stocks(tmp_path, monkeypatch) 
 
     response = client.put(
         "/api/watchlist",
-        headers=access_key_headers(),
         json={"user_email": "trader@example.com", "stocks": stocks},
     )
 
@@ -83,14 +72,46 @@ def test_server_watchlist_accepts_more_than_eight_stocks(tmp_path, monkeypatch) 
     assert response.json()["stocks"] == stocks
 
 
-def test_server_watchlist_requires_frontend_auth(tmp_path, monkeypatch) -> None:
+def test_server_watchlist_does_not_require_report_auth(tmp_path, monkeypatch) -> None:
     config = AppConfig(data_dir=tmp_path, database_url=None, access_key=TEST_ACCESS_KEY)
     monkeypatch.setattr(main, "CONFIG", config)
     monkeypatch.setattr(watchlist_router, "CONFIG", config)
 
     response = TestClient(main.app).get("/api/watchlist?user_email=trader%40example.com")
 
-    assert response.status_code == 401
+    assert response.status_code == 200
+
+
+def test_legacy_tauri_client_auth_then_watchlist_flow(tmp_path, monkeypatch) -> None:
+    config = AppConfig(data_dir=tmp_path, database_url=None, access_key=TEST_ACCESS_KEY)
+    monkeypatch.setattr(main, "CONFIG", config)
+    monkeypatch.setattr(watchlist_router, "CONFIG", config)
+    client = TestClient(main.app)
+    origin = "tauri://localhost"
+
+    auth_response = client.get("/api/client-auth", headers={"Origin": origin})
+    token = auth_response.json()["csrf_token"]
+    preflight_response = client.options(
+        "/api/watchlist?user_email=desktop%40example.com",
+        headers={
+            "Origin": origin,
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "x-stock-lab-csrf",
+        },
+    )
+    client.cookies.clear()
+    watchlist_response = client.get(
+        "/api/watchlist?user_email=desktop%40example.com",
+        headers={"Origin": origin, "X-Stock-Lab-CSRF": token},
+    )
+
+    assert auth_response.status_code == 200
+    assert auth_response.headers["access-control-allow-origin"] == origin
+    assert preflight_response.status_code == 200
+    assert preflight_response.headers["access-control-allow-origin"] == origin
+    assert "x-stock-lab-csrf" in preflight_response.headers["access-control-allow-headers"].lower()
+    assert watchlist_response.status_code == 200
+    assert watchlist_response.headers["access-control-allow-origin"] == origin
 
 
 def test_storage_health_initializes_sqlite_tables(tmp_path, monkeypatch) -> None:
@@ -99,7 +120,7 @@ def test_storage_health_initializes_sqlite_tables(tmp_path, monkeypatch) -> None
     monkeypatch.setattr(watchlist_router, "CONFIG", config)
     client = TestClient(main.app)
 
-    response = client.get("/api/watchlist/storage-health", headers=access_key_headers())
+    response = client.get("/api/watchlist/storage-health")
 
     assert response.status_code == 200
     assert response.json() == {
@@ -128,9 +149,18 @@ def test_manual_screen_report_push_requires_auth_and_runs_close_report(tmp_path,
     client = TestClient(main.app)
 
     rejected = client.post("/api/screen-report/manual-push")
-    accepted = client.post("/api/screen-report/manual-push", headers=access_key_headers())
+    origin = "http://localhost:5173"
+    token = client.get("/api/client-auth", headers={"Origin": origin}).json()["csrf_token"]
+    accepted = client.post(
+        "/api/screen-report/manual-push",
+        headers={
+            "Origin": origin,
+            "Sec-Fetch-Site": "same-origin",
+            "X-Stock-Lab-CSRF": token,
+        },
+    )
 
-    assert rejected.status_code == 401
+    assert rejected.status_code == 403
     assert accepted.status_code == 200
     assert accepted.json()["generation"] == "generated"
     assert accepted.json()["deliveries"] == [{"status": "sent"}]

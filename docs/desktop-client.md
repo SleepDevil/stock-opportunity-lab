@@ -130,15 +130,15 @@ Tauri WebView -> bundled React assets
 ## 数据与安全
 
 - 默认生产客户端启动打包后的 FastAPI sidecar，API 只绑定本机回环地址。
-- Web 报告、通知设置和锐评生成/群推送接口使用 `Authorization: Bearer` 访问密钥；首次访问时手工输入，密钥仅保存在当前会话。群 ID 只保存在服务端用户配置中，不随每次行情快照回传到客户端。
-- Tauri 与 Web 使用同一 Bearer 规则；访问密钥不写入安装包或前端构建产物。
+- Web 与 Tauri 通过 `/api/client-auth` 自动获取短时签名 token，不要求用户输入密钥。扫描和报告接口发送 `X-Stock-Lab-CSRF`；自选同步、通知设置和锐评接口不依赖报告鉴权。
+- `/api/client-auth` 保持兼容旧版 Tauri；服务端签名密钥不写入安装包或前端构建产物。群 ID 只保存在服务端用户配置中，不随每次行情快照回传到客户端。
 - Tauri CSP 的 `connect-src` 放行本地回环地址和 HTTPS 同步服务；同步地址会进入公开安装包，但不包含数据库、机器人或模型密钥。
 - 本地构建使用 ad-hoc 签名。正式对外分发时应把 `src-tauri/tauri.prod.conf.json` 和 `src-tauri/tauri.release.conf.json` 的签名身份替换为 Apple Developer ID，并完成 notarization。
 
 ## 测试
 
 ```bash
-npm run test:api       # FastAPI/业务测试，含 Bearer 访问密钥鉴权
+npm run test:api       # FastAPI/业务测试，含客户端 token 与 Tauri 兼容契约
 npm run test:web       # 前端单测 + Web 生产构建
 npm run test:desktop   # Rust/Tauri 单测
 npm run test           # 上述全部检查

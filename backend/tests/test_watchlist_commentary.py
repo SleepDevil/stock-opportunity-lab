@@ -650,10 +650,10 @@ def test_watchlist_commentary_api_accepts_more_than_eight_stocks() -> None:
     assert response.json()["summary"]["total"] == 9
 
 
-def test_watchlist_commentary_api_requires_client_auth() -> None:
+def test_watchlist_commentary_api_does_not_require_report_auth() -> None:
     response = TestClient(main.app).post("/api/watchlist-commentary", json=sample_request())
 
-    assert response.status_code == 401
+    assert response.status_code == 200
 
 
 def test_watchlist_commentary_sends_configured_feishu_card(tmp_path, monkeypatch) -> None:

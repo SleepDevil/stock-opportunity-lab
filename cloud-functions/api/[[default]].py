@@ -68,6 +68,9 @@ class handler(BaseHTTPRequestHandler):
         if path == "/config":
             self._json(public_config())
             return
+        if path == "/client-auth":
+            self._json({"csrf_token": "edgeone-light-backend"})
+            return
         if path == "/learning-summary":
             self._json(empty_learning_summary())
             return

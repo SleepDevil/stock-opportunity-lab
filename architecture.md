@@ -54,7 +54,7 @@ flowchart LR
 | 自我复盘 | `backend/app/services/evolution.py` | 编排最近盘后报告 -> 次日回测 -> 学习 -> 优化建议 |
 | 公众号知识 | `backend/app/services/wechat_knowledge.py` | 保存公众号来源、导入文章、提取关键知识 |
 | AI 解释 | `backend/app/services/ai.py` | 构造 AI payload，并生成规则化解释 |
-| 客户端鉴权 | `backend/app/services/client_auth.py` | 校验报告、通知和自选接口的高熵 Bearer 访问密钥 |
+| 客户端鉴权 | `backend/app/services/client_auth.py` | 自动签发并校验扫描/报告接口的短时签名 token |
 | 前端工作台 | `frontend/src/App.tsx` | 页面路由、状态编排、策略进化 UI |
 | 运行时适配 | `frontend/src/lib/runtime.ts` | Web 保持同源 API；桌面构建连接本机 sidecar 并处理启动错误态 |
 | 桌面壳 | `src-tauri/` | Tauri 窗口、单实例、窗口状态、日志和 Python sidecar 生命周期 |
@@ -308,16 +308,16 @@ flowchart LR
 2. 用账户邮箱调用飞书通讯录接口换取 `open_id`。
 3. 用机器人向该 `open_id` 发送文本通知。
 
-机器人 app secret 和访问密钥只能存在于部署环境变量或本地 `.env`，不能进入前端 bundle、文档示例或 Git 仓库。`/api/config` 不返回访问密钥，只暴露 `access_key_configured` 状态。
+机器人 app secret 和服务端签名密钥只能存在于部署环境变量或本地 `.env`，不能进入前端 bundle、文档示例或 Git 仓库。`/api/config` 不返回签名密钥，只暴露 `access_key_configured` 状态。
 
-受保护接口使用共享 Bearer 访问密钥：
+扫描和报告接口使用自动签发的短时客户端 token：
 
-- 服务端从 `STOCK_LAB_ACCESS_KEY` 读取至少 32 位的高熵密钥；未配置或长度不足时 fail closed，返回 `503`。
-- Web/桌面客户端首次访问受保护接口时要求用户手工输入密钥，仅保存到当前会话的 `sessionStorage`，不自动签发、不写入前端 Bundle。
-- 前端通过标准 `Authorization: Bearer <key>` header 发送密钥；缺失或校验失败返回 `401`。
-- 当前受保护范围包括 `/api/screen*`、`/api/notification-settings*` 和 `/api/watchlist*`。后台任务完成后的实际发信仍由服务端内部调用 `send_feishu_tip()`，不暴露公网收件人参数。
+- `/api/client-auth` 使用服务端 `STOCK_LAB_ACCESS_KEY` 签发带时间戳和随机 nonce 的 HMAC token，有效期 12 小时；本地 sidecar 未配置密钥时使用进程级随机签名材料。
+- 浏览器自动获取 token，不弹输入框；同源 Web 同时校验 HttpOnly Cookie 与 `X-Stock-Lab-CSRF` header。Tauri 仅在访问本机回环 sidecar 时兼容只发送 header，线上报告接口仍要求 Cookie 与 header 同时匹配。
+- token 缺失、过期或被篡改时返回 `403`；非 GET 请求还校验可信 Origin 与 `Sec-Fetch-Site`。
+- 受保护范围仅包括 `/api/screen`、`/api/screen-reports`、`/api/screen-report` 和手动报告推送。通知设置、自选同步和锐评接口不再依赖报告鉴权，兼容旧版 Tauri 的 `/api/client-auth` 调用链。
 
-共享密钥适合单人或小范围部署，不提供用户级权限隔离。多人服务应升级为公司 SSO、服务端 Session、速率限制和审计日志。
+该 token 提供请求完整性和跨站保护，不提供用户级权限隔离。多人服务应升级为公司 SSO、服务端 Session、速率限制和审计日志。
 
 ## 11. 关键 API
 
@@ -353,7 +353,7 @@ flowchart LR
 - 策略优化器会基于亏损/止损样本提出保守参数实验，并保存稳定实验版本。
 - 后续回测会记录 baseline/proposed 的实验结果对照。
 - 自我复盘周期会选择最近盘后报告并返回回测和优化证据。
-- 报告、通知设置和自选接口要求正确的 Bearer 访问密钥；伪造 Cookie、旧 CSRF header 和错误密钥均被拒绝。
+- 扫描和报告接口要求有效的短时签名 token；篡改 token、伪造业务 Cookie 和不可信来源均被拒绝，自选与通知接口保持客户端兼容。
 
 前端验证依赖：
 
@@ -368,4 +368,4 @@ flowchart LR
 2. 定时自我复盘：每天收盘后自动运行 `/api/evolution-cycle`，并发送复盘摘要。
 3. 统计显著性：不要只看胜率，还要看样本量、盈亏比、最大回撤、市场环境分层和置信区间。
 4. 数据备份：为外部 Postgres 增加定期导出和恢复流程。
-5. 云端安全：多人使用时把共享访问密钥升级为公司 SSO、用户会话、速率限制和敏感操作审计。
+5. 云端安全：多人使用时把短时客户端 token 升级为公司 SSO、用户会话、速率限制和敏感操作审计。

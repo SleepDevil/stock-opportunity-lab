@@ -68,9 +68,13 @@ from app.models import (
 from app.services.ai import build_payload, explain
 from app.services.backtest import run_backtest
 from app.services.client_auth import (
-    ClientAuthConfigurationError,
+    CSRF_COOKIE_NAME,
+    TOKEN_TTL_SECONDS,
     ClientAuthError,
+    is_https_request,
+    issue_csrf_token,
     require_client_auth,
+    require_trusted_origin,
 )
 from app.services.crisis_monitor import run_crisis_monitor
 from app.services.data_provider import AkShareProvider
@@ -234,20 +238,35 @@ def get_config():
     return CONFIG.public_dict()
 
 
-def require_frontend_client(request: Request) -> None:
+def require_report_client(request: Request) -> None:
     try:
         require_client_auth(request, CONFIG)
-    except ClientAuthConfigurationError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ClientAuthError as exc:
-        raise HTTPException(
-            status_code=401,
-            detail=str(exc),
-            headers={"WWW-Authenticate": "Bearer"},
-        ) from exc
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
 
 
-@app.get("/api/notification-settings", response_model=NotificationSettings, dependencies=[Depends(require_frontend_client)])
+@app.get("/api/client-auth")
+def get_client_auth(request: Request, response: Response) -> dict[str, str]:
+    """Issue the short-lived signed token expected by web and Tauri clients."""
+
+    try:
+        require_trusted_origin(request)
+    except ClientAuthError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    token = issue_csrf_token(CONFIG)
+    response.set_cookie(
+        CSRF_COOKIE_NAME,
+        token,
+        httponly=True,
+        secure=is_https_request(request),
+        samesite="lax",
+        max_age=TOKEN_TTL_SECONDS,
+        path="/",
+    )
+    return {"csrf_token": token}
+
+
+@app.get("/api/notification-settings", response_model=NotificationSettings)
 def get_notification_settings(user_email: str | None = None) -> NotificationSettings:
     try:
         return load_notification_settings(CONFIG, user_email)
@@ -255,7 +274,7 @@ def get_notification_settings(user_email: str | None = None) -> NotificationSett
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@app.put("/api/notification-settings", response_model=NotificationSettings, dependencies=[Depends(require_frontend_client)])
+@app.put("/api/notification-settings", response_model=NotificationSettings)
 def put_notification_settings(request: NotificationSettingsUpdate) -> NotificationSettings:
     try:
         return save_notification_settings(
@@ -271,7 +290,7 @@ def put_notification_settings(request: NotificationSettingsUpdate) -> Notificati
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@app.post("/api/notification-settings/test", response_model=ApiMessage, dependencies=[Depends(require_frontend_client)])
+@app.post("/api/notification-settings/test", response_model=ApiMessage)
 def test_notification(request: NotificationSettingsUpdate | None = Body(default=None)) -> ApiMessage:
     settings = load_notification_settings(CONFIG, request.user_email if request else None)
     if not settings.user_email:
@@ -283,7 +302,6 @@ def test_notification(request: NotificationSettingsUpdate | None = Body(default=
 @app.post(
     "/api/notification-settings/watchlist-commentary/test",
     response_model=ApiMessage,
-    dependencies=[Depends(require_frontend_client)],
 )
 def test_watchlist_commentary_notification(
     request: NotificationSettingsUpdate | None = Body(default=None),
@@ -366,7 +384,7 @@ def quant_backtest(request: QuantBacktestRequest, response: Response) -> TaskAcc
 @app.post(
     "/api/screen",
     response_model=ScreenResponse | TaskAcceptedResponse,
-    dependencies=[Depends(require_frontend_client)],
+    dependencies=[Depends(require_report_client)],
 )
 def screen(request: ScreenRequest, response: Response) -> ScreenResponse | TaskAcceptedResponse:
     try:
@@ -382,7 +400,7 @@ def screen(request: ScreenRequest, response: Response) -> ScreenResponse | TaskA
 @app.get(
     "/api/screen-reports",
     response_model=ScreenReportsResponse,
-    dependencies=[Depends(require_frontend_client)],
+    dependencies=[Depends(require_report_client)],
 )
 def screen_reports() -> ScreenReportsResponse:
     dates: list[str] = []
@@ -403,7 +421,7 @@ def screen_reports() -> ScreenReportsResponse:
 @app.get(
     "/api/screen-report",
     response_model=ScreenResponse,
-    dependencies=[Depends(require_frontend_client)],
+    dependencies=[Depends(require_report_client)],
 )
 def screen_report(date: str) -> ScreenResponse:
     try:
@@ -692,7 +710,6 @@ def market_index(refresh: bool = False) -> MarketIndexResponse:
 @app.post(
     "/api/watchlist-commentary",
     response_model=WatchlistCommentaryResponse,
-    dependencies=[Depends(require_frontend_client)],
 )
 def watchlist_commentary(request: WatchlistCommentaryRequest) -> WatchlistCommentaryResponse:
     try:

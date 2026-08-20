@@ -58,7 +58,7 @@ STOCK_LAB_AI_COMMAND=optional-legacy-command
 
 未配置数据库连接时使用 `data/stock_lab.sqlite3`。本地开发命令默认忽略远程数据库地址，避免误连生产数据。
 
-报告、通知设置和自选同步接口要求 `STOCK_LAB_ACCESS_KEY`。Web/桌面客户端首次访问时由用户手工输入，密钥仅保存在当前浏览器会话，不会写入前端 Bundle；服务端未配置或密钥少于 32 位时会拒绝所有受保护请求。
+`STOCK_LAB_ACCESS_KEY` 仅作为服务端签名材料，不会下发到浏览器或写入前端 Bundle。Web/桌面客户端通过 `/api/client-auth` 自动获取短时签名 token；扫描与报告接口校验该 token，自选同步、通知设置和锐评接口不要求用户输入密钥。未配置访问密钥的本地 sidecar 会使用进程级随机签名材料，保持桌面客户端开箱即用。
 
 自选锐评默认在检测到 `STOCK_LAB_ZHIPU_API_KEY` 后调用智谱 `glm-4.7-flash`；未配置密钥、请求超时或模型限流时自动使用行情规则代笔。`STOCK_LAB_AI_PROVIDER=command` 可继续使用旧的命令适配器，`rules` 可强制关闭模型调用。API Key 只在后端读取，不会进入前端 Bundle、接口响应或日志。
 

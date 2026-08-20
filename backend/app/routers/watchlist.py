@@ -7,7 +7,6 @@ from pydantic import BaseModel, Field
 
 from app.config import CONFIG
 from app.services.client_auth import (
-    ClientAuthConfigurationError,
     ClientAuthError,
     require_client_auth,
 )
@@ -49,23 +48,16 @@ class StorageHealthResponse(BaseModel):
     error_type: str | None = None
 
 
-def require_web_client(request: Request) -> None:
+def require_report_client(request: Request) -> None:
     try:
         require_client_auth(request, CONFIG)
-    except ClientAuthConfigurationError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ClientAuthError as exc:
-        raise HTTPException(
-            status_code=401,
-            detail=str(exc),
-            headers={"WWW-Authenticate": "Bearer"},
-        ) from exc
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
 
 
 @router.get(
     "/api/watchlist",
     response_model=ServerWatchlistResponse,
-    dependencies=[Depends(require_web_client)],
 )
 def get_watchlist(user_email: str) -> ServerWatchlistResponse:
     try:
@@ -77,7 +69,6 @@ def get_watchlist(user_email: str) -> ServerWatchlistResponse:
 @router.put(
     "/api/watchlist",
     response_model=ServerWatchlistResponse,
-    dependencies=[Depends(require_web_client)],
 )
 def put_watchlist(request: ServerWatchlistUpdate) -> ServerWatchlistResponse:
     try:
@@ -95,7 +86,6 @@ def put_watchlist(request: ServerWatchlistUpdate) -> ServerWatchlistResponse:
 @router.get(
     "/api/watchlist/storage-health",
     response_model=StorageHealthResponse,
-    dependencies=[Depends(require_web_client)],
 )
 def get_watchlist_storage_health() -> StorageHealthResponse:
     backend = (
@@ -133,7 +123,7 @@ def classify_storage_error(exc: Exception) -> str:
 
 @router.post(
     "/api/screen-report/manual-push",
-    dependencies=[Depends(require_web_client)],
+    dependencies=[Depends(require_report_client)],
 )
 def manual_push_screen_report() -> dict[str, Any]:
     try:

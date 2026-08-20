@@ -48,10 +48,6 @@ FIXTURES = Path(__file__).parent / "fixtures"
 TEST_ACCESS_KEY = "test-access-key-0123456789abcdef"
 
 
-def access_key_headers(access_key: str = TEST_ACCESS_KEY) -> dict[str, str]:
-    return {"Authorization": f"Bearer {access_key}"}
-
-
 @pytest.fixture(autouse=True)
 def isolate_project_database_url(monkeypatch) -> None:
     monkeypatch.delenv("STOCK_LAB_DATABASE_URL", raising=False)
@@ -4955,7 +4951,7 @@ def test_notification_test_endpoint_reports_send_failure(tmp_path: Path, monkeyp
     assert response.message == "通知发送失败，请检查飞书机器人配置和通知邮箱"
 
 
-def test_notification_settings_api_requires_access_key(tmp_path: Path, monkeypatch) -> None:
+def test_notification_settings_api_does_not_require_report_auth(tmp_path: Path, monkeypatch) -> None:
     from app import main
 
     config = AppConfig(data_dir=tmp_path, access_key=TEST_ACCESS_KEY)
@@ -4965,44 +4961,79 @@ def test_notification_settings_api_requires_access_key(tmp_path: Path, monkeypat
     get_response = client.get("/api/notification-settings?user_email=user%40example.com")
     put_response = client.put(
         "/api/notification-settings",
-        json={"user_email": "user@example.com"},
-        headers=access_key_headers("forged-access-key"),
+        json={"user_email": "user@example.com", "excluded_boards": ["star"]},
     )
 
-    assert get_response.status_code == 401
-    assert get_response.headers["www-authenticate"] == "Bearer"
-    assert put_response.status_code == 401
-    assert load_notification_settings(config, "user@example.com").excluded_boards == []
+    assert get_response.status_code == 200
+    assert put_response.status_code == 200
+    assert load_notification_settings(config, "user@example.com").excluded_boards == ["star"]
 
 
-def test_client_auth_endpoint_is_removed(tmp_path: Path, monkeypatch) -> None:
+def test_client_auth_endpoint_restores_signed_token_contract(tmp_path: Path, monkeypatch) -> None:
     from app import main
 
     config = AppConfig(data_dir=tmp_path, access_key=TEST_ACCESS_KEY)
     monkeypatch.setattr(main, "CONFIG", config)
     client = TestClient(main.app)
 
-    response = client.get("/api/client-auth")
+    response = client.get(
+        "/api/client-auth",
+        headers={"Origin": "http://localhost:5173"},
+    )
 
-    assert response.status_code == 404
+    assert response.status_code == 200
+    token = response.json()["csrf_token"]
+    assert token.count(".") == 2
+    assert client.cookies.get("stock_lab_csrf") == token
+    assert client.get(
+        "/api/client-auth",
+        headers={"Referer": "http://testserver/"},
+    ).status_code == 200
 
 
-def test_protected_api_fails_closed_without_configured_access_key(tmp_path: Path, monkeypatch) -> None:
+def test_client_auth_endpoint_requires_trusted_frontend_origin(tmp_path: Path, monkeypatch) -> None:
+    from app import main
+
+    config = AppConfig(data_dir=tmp_path, access_key=TEST_ACCESS_KEY)
+    monkeypatch.setattr(main, "CONFIG", config)
+    client = TestClient(main.app)
+
+    assert client.get("/api/client-auth").status_code == 403
+    assert client.get(
+        "/api/client-auth",
+        headers={"Origin": "https://attacker.example"},
+    ).status_code == 403
+
+
+def test_client_auth_token_rejects_tampering_and_expiry(tmp_path: Path) -> None:
+    from app.services.client_auth import TOKEN_TTL_SECONDS, issue_csrf_token, validate_csrf_token
+
+    config = AppConfig(data_dir=tmp_path, access_key=TEST_ACCESS_KEY)
+    token = issue_csrf_token(config, now=1_000)
+
+    assert validate_csrf_token(token, config, now=1_001)
+    assert not validate_csrf_token(f"{token}x", config, now=1_001)
+    assert not validate_csrf_token(token, config, now=1_000 + TOKEN_TTL_SECONDS + 1)
+
+
+def test_local_report_auth_works_without_deployment_access_key(tmp_path: Path, monkeypatch) -> None:
     from app import main
 
     config = AppConfig(data_dir=tmp_path, access_key=None)
     monkeypatch.setattr(main, "CONFIG", config)
 
-    response = TestClient(main.app).get(
-        "/api/notification-settings?user_email=user%40example.com",
-        headers=access_key_headers(),
+    client = TestClient(main.app)
+    origin = "http://localhost:5173"
+    token = client.get("/api/client-auth", headers={"Origin": origin}).json()["csrf_token"]
+    response = client.get(
+        "/api/screen-reports",
+        headers={"Origin": origin, "X-Stock-Lab-CSRF": token},
     )
 
-    assert response.status_code == 503
-    assert "STOCK_LAB_ACCESS_KEY" in response.json()["detail"]
+    assert response.status_code == 200
 
 
-def test_notification_settings_api_accepts_private_network_frontend_origin(tmp_path: Path, monkeypatch) -> None:
+def test_notification_settings_api_accepts_private_network_frontend(tmp_path: Path, monkeypatch) -> None:
     from app import main
 
     config = AppConfig(data_dir=tmp_path, access_key=TEST_ACCESS_KEY)
@@ -5013,14 +5044,14 @@ def test_notification_settings_api_accepts_private_network_frontend_origin(tmp_p
     save_response = client.put(
         "/api/notification-settings",
         json={"user_email": "user@example.com", "board_exclusion_enabled": True, "excluded_boards": ["startup"]},
-        headers={**access_key_headers(), "Origin": origin, "Referer": f"{origin}/settings"},
+        headers={"Origin": origin, "Referer": f"{origin}/settings"},
     )
 
     assert save_response.status_code == 200
     assert load_notification_settings(config, "user@example.com").excluded_boards == ["startup"]
 
 
-def test_notification_settings_api_accepts_bearer_access_key(tmp_path: Path, monkeypatch) -> None:
+def test_notification_settings_api_accepts_requests_without_client_auth(tmp_path: Path, monkeypatch) -> None:
     from app import main
 
     config = AppConfig(data_dir=tmp_path, access_key=TEST_ACCESS_KEY)
@@ -5030,12 +5061,8 @@ def test_notification_settings_api_accepts_bearer_access_key(tmp_path: Path, mon
     save_response = client.put(
         "/api/notification-settings",
         json={"user_email": "user@example.com", "board_exclusion_enabled": True, "excluded_boards": ["star"]},
-        headers=access_key_headers(),
     )
-    get_response = client.get(
-        "/api/notification-settings?user_email=user%40example.com",
-        headers=access_key_headers(),
-    )
+    get_response = client.get("/api/notification-settings?user_email=user%40example.com")
 
     assert save_response.status_code == 200
     assert save_response.json()["user_email"] == "user@example.com"
@@ -5043,7 +5070,26 @@ def test_notification_settings_api_accepts_bearer_access_key(tmp_path: Path, mon
     assert get_response.json()["excluded_boards"] == ["star"]
 
 
-def test_notification_settings_api_accepts_tauri_bearer_without_browser_cookie(tmp_path: Path, monkeypatch) -> None:
+def test_client_auth_endpoint_accepts_tauri_origin_without_browser_cookie(tmp_path: Path, monkeypatch) -> None:
+    from app import main
+
+    config = AppConfig(data_dir=tmp_path, access_key=TEST_ACCESS_KEY)
+    monkeypatch.setattr(main, "CONFIG", config)
+    client = TestClient(main.app, base_url="http://127.0.0.1:8765")
+    origin = "tauri://localhost"
+
+    auth_response = client.get("/api/client-auth", headers={"Origin": origin})
+    token = auth_response.json()["csrf_token"]
+    report_response = client.get(
+        "/api/screen-reports",
+        headers={"Origin": origin, "X-Stock-Lab-CSRF": token},
+    )
+
+    assert auth_response.status_code == 200
+    assert report_response.status_code == 200
+
+
+def test_online_report_does_not_accept_tauri_header_without_cookie(tmp_path: Path, monkeypatch) -> None:
     from app import main
 
     config = AppConfig(data_dir=tmp_path, access_key=TEST_ACCESS_KEY)
@@ -5051,34 +5097,34 @@ def test_notification_settings_api_accepts_tauri_bearer_without_browser_cookie(t
     client = TestClient(main.app)
     origin = "tauri://localhost"
 
-    save_response = client.put(
-        "/api/notification-settings",
-        json={"user_email": "desktop-user@example.com", "board_exclusion_enabled": True, "excluded_boards": ["star"]},
-        headers={**access_key_headers(), "Origin": origin},
+    token = client.get("/api/client-auth", headers={"Origin": origin}).json()["csrf_token"]
+    client.cookies.clear()
+    response = client.get(
+        "/api/screen-reports",
+        headers={"Origin": origin, "X-Stock-Lab-CSRF": token},
     )
 
-    assert save_response.status_code == 200
-    assert save_response.json()["user_email"] == "desktop-user@example.com"
+    assert response.status_code == 403
 
 
-def test_notification_settings_api_rejects_forged_cookies_and_legacy_header(tmp_path: Path, monkeypatch) -> None:
+def test_report_api_rejects_forged_cookies_and_legacy_header(tmp_path: Path, monkeypatch) -> None:
     from app import main
 
     config = AppConfig(data_dir=tmp_path, access_key=TEST_ACCESS_KEY)
     monkeypatch.setattr(main, "CONFIG", config)
     client = TestClient(main.app)
     response = client.get(
-        "/api/notification-settings?user_email=browser-user%40example.com",
+        "/api/screen-reports",
         headers={
             "Cookie": "aigc_user_id=1; monitor_huoshan_web_id=1; upgrade_to_ida=true",
             "X-Stock-Lab-CSRF": "forged-token",
         },
     )
 
-    assert response.status_code == 401
+    assert response.status_code == 403
 
 
-def test_notification_test_api_blocks_missing_access_key(tmp_path: Path, monkeypatch) -> None:
+def test_notification_test_api_does_not_require_report_auth(tmp_path: Path, monkeypatch) -> None:
     from app import main
 
     config = AppConfig(data_dir=tmp_path, access_key=TEST_ACCESS_KEY)
@@ -5096,25 +5142,8 @@ def test_notification_test_api_blocks_missing_access_key(tmp_path: Path, monkeyp
 
     response = client.post("/api/notification-settings/test", json={"user_email": "user@example.com"}, headers={"Origin": "http://localhost:5173"})
 
-    assert response.status_code == 401
-    assert not called
-
-
-def test_notification_test_api_accepts_access_key(tmp_path: Path, monkeypatch) -> None:
-    from app import main
-
-    config = AppConfig(data_dir=tmp_path, access_key=TEST_ACCESS_KEY)
-    save_notification_settings(config, "user@example.com")
-    monkeypatch.setattr(main, "CONFIG", config)
-    monkeypatch.setattr(main, "send_feishu_tip", lambda *_args: True)
-    client = TestClient(main.app)
-    response = client.post(
-        "/api/notification-settings/test",
-        json={"user_email": "user@example.com"},
-        headers=access_key_headers(),
-    )
-
     assert response.status_code == 200
+    assert called
     assert response.json() == {"ok": True, "message": "测试通知已发送"}
 
 
@@ -5149,7 +5178,6 @@ def test_watchlist_commentary_notification_test_sends_saved_card(tmp_path: Path,
     response = client.post(
         "/api/notification-settings/watchlist-commentary/test",
         json={"user_email": "user@example.com"},
-        headers=access_key_headers(),
     )
 
     assert response.status_code == 200
