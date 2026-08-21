@@ -31,6 +31,7 @@ WATCHLIST_SYSTEM_PROMPT = """
 10. 遇到 praise_big，同样先写完整股票名，再使用 suggested_nickname 抬轿；例如德明利涨停时可以称“德明利今天得叫德爷”。盘中曾触及涨跌停时，必须结合对应 evidence_zh 准确说明后来是否开板。
 11. 普通涨跌可以轻松调侃，但极端涨跌不能只写“表现亮眼、承压明显”这类公关腔；要有鲜明态度，同时事实与比喻仍须清楚区分。
 12. 不要重复风险声明，产品会在卡片底部统一展示。
+13. 如果要写具体股价，必须从该股的 watchlist_quotes 或 intraday_facts 中逐字取值，使用清晰的数字和“元”；禁止将 185 改写成“18块5”之类歧义价格。没有把握时就不写具体价格。
 """.strip()
 
 RATE_LIMIT_RETRY_DELAYS = (2.0, 5.0)
@@ -79,7 +80,7 @@ def generate_zhipu_watchlist_commentary(
         ],
         "thinking": {"type": "disabled"},
         "response_format": {"type": "json_object"},
-        "temperature": 0.85,
+        "temperature": 0.65,
         "max_tokens": 512,
         "stream": False,
     }

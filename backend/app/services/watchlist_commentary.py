@@ -51,6 +51,12 @@ DIRECTION_NEGATIONS = ("没", "未", "不", "并非", "不是", "没有")
 ROAST_HARD_PCT = -8.0
 PRAISE_BIG_PCT = 9.5
 STOCK_NAME_DECORATION_RE = re.compile(r"^(?:\*?ST|SST|XD|XR|DR|N|C)+", re.IGNORECASE)
+PRICE_CLAIM_RE = re.compile(
+    r"(?<![\d.])(?P<whole>\d{1,6})(?P<decimal>\.\d{1,4})?\s*"
+    r"(?P<unit>元|块)(?P<fraction>\d{1,2})?(?:角)?(?![\d])"
+)
+PRICE_CLAIM_CLAUSE_BOUNDARY_RE = re.compile(r"[。！？!?；;\n]")
+AI_VALIDATION_ATTEMPTS = 2
 
 
 def optional_number(value: Any) -> float | None:
@@ -862,17 +868,114 @@ def validate_tone_profile_claims(
             raise ValueError(f"AI 对 {profile.get('name')} 使用了涨跌方向相反的称呼 {opposite}")
 
 
+def claimed_price(match: re.Match[str]) -> tuple[float, float]:
+    decimal = match.group("decimal") or ""
+    fraction = match.group("fraction") or ""
+    if decimal:
+        value = float(f"{match.group('whole')}{decimal}")
+        tolerance = 0.5 * 10 ** -(len(decimal) - 1) + 1e-9
+        return value, tolerance
+    if fraction:
+        value = float(match.group("whole")) + int(fraction) / (10 ** len(fraction))
+        tolerance = 0.5 * 10 ** -len(fraction) + 1e-9
+        return value, tolerance
+    # “185 块”是口语化整数表达，允许匹配 185.xx，但不允许数量级变化。
+    return float(match.group("whole")), 1.0
+
+
+def stock_price_evidence(
+    stocks: list[dict[str, Any]],
+    intraday_facts: dict[str, Any] | None,
+) -> dict[str, list[float]]:
+    evidence: dict[str, list[float]] = {}
+
+    def append(code: str, value: Any) -> None:
+        number = optional_number(value)
+        if number is not None and number > 0:
+            evidence.setdefault(code, []).append(number)
+
+    for stock in stocks:
+        code = str(stock.get("code") or "").zfill(6)
+        for key in ("price", "open", "high", "low", "previous_close"):
+            append(code, stock.get(key))
+
+    for fact in (intraday_facts or {}).get("stocks") or []:
+        if not isinstance(fact, dict) or not fact.get("available"):
+            continue
+        code = str(fact.get("code") or "").zfill(6)
+        prices = fact.get("prices")
+        if isinstance(prices, dict):
+            for value in prices.values():
+                append(code, value)
+        for checkpoint in fact.get("checkpoints") or []:
+            if isinstance(checkpoint, dict):
+                append(code, checkpoint.get("price"))
+        for key in ("limit_up", "limit_down"):
+            event = fact.get(key)
+            if isinstance(event, dict):
+                append(code, event.get("price"))
+    return evidence
+
+
+def price_claim_stock_code(
+    text: str,
+    claim_start: int,
+    stocks: list[dict[str, Any]],
+) -> str | None:
+    clause_start = 0
+    for boundary in PRICE_CLAIM_CLAUSE_BOUNDARY_RE.finditer(text, 0, claim_start):
+        clause_start = boundary.end()
+    clause_end_match = PRICE_CLAIM_CLAUSE_BOUNDARY_RE.search(text, claim_start)
+    clause_end = clause_end_match.start() if clause_end_match else len(text)
+    clause = text[clause_start:clause_end]
+    relative_start = claim_start - clause_start
+    mentions: list[tuple[int, str]] = []
+    for stock in stocks:
+        name = str(stock.get("name") or "")
+        if not name:
+            continue
+        for match in re.finditer(re.escape(name), clause):
+            mentions.append((match.start(), str(stock.get("code") or "").zfill(6)))
+    if not mentions:
+        return None
+    preceding = [mention for mention in mentions if mention[0] <= relative_start]
+    return max(preceding, default=min(mentions), key=lambda item: item[0])[1]
+
+
+def validate_price_claims(
+    title: str,
+    commentary: str,
+    stocks: list[dict[str, Any]],
+    intraday_facts: dict[str, Any] | None,
+) -> None:
+    text = f"{title}。{commentary}"
+    evidence = stock_price_evidence(stocks, intraday_facts)
+    all_prices = [price for prices in evidence.values() for price in prices]
+    for match in PRICE_CLAIM_RE.finditer(text):
+        value, tolerance = claimed_price(match)
+        code = price_claim_stock_code(text, match.start(), stocks)
+        candidates = evidence.get(code, []) if code else all_prices
+        if not candidates or not any(abs(value - candidate) < tolerance for candidate in candidates):
+            stock = next(
+                (str(item.get("name") or code) for item in stocks if str(item.get("code") or "").zfill(6) == code),
+                "对应股票",
+            )
+            raise ValueError(f"AI 对 {stock} 生成了无行情证据的价格 {match.group(0)}")
+
+
 def validate_generated_commentary(
     title: str,
     commentary: str,
     summary: dict[str, Any],
     stocks: list[dict[str, Any]],
     tone_profiles: list[dict[str, Any]],
+    intraday_facts: dict[str, Any] | None = None,
 ) -> None:
     validate_intraday_claims(commentary)
     validate_ranking_claims(title, commentary, summary, stocks)
     validate_direction_claims(commentary, stocks)
     validate_tone_profile_claims(title, commentary, tone_profiles)
+    validate_price_claims(title, commentary, stocks, intraday_facts)
 
 
 def unconfigured_ai_note(config: AppConfig) -> str:
@@ -914,31 +1017,63 @@ def generate_watchlist_commentary(
     generation_failed = False
     for backend in backends:
         try:
-            payload = ai_payload(request, summary, captured_at)
-            if backend == "zhipu":
-                zhipu_config = replace(app_config, zhipu_api_key=runtime_zhipu_api_key(app_config))
-                generated = generate_zhipu_watchlist_commentary(
-                    zhipu_config,
-                    payload,
-                    fallback_title=title,
-                )
-                validate_generated_commentary(generated.title, generated.commentary, summary, quotes, tone_profiles)
-                title = generated.title
-                commentary = generated.commentary
-                provider = "zhipu"
-                model = generated.model
-            else:
-                command = runtime_ai_command(app_config)
-                if not command:
+            base_payload = ai_payload(request, summary, captured_at)
+            validation_error: ValueError | None = None
+            for attempt in range(AI_VALIDATION_ATTEMPTS):
+                payload = dict(base_payload)
+                if validation_error is not None:
+                    payload["retry_instruction"] = (
+                        "上一次输出未通过行情事实校验："
+                        f"{validation_error}。请重新生成，具体价格必须逐字复制输入数据；"
+                        "如无必要可完全不写具体价格。"
+                    )
+                if backend == "zhipu":
+                    zhipu_config = replace(app_config, zhipu_api_key=runtime_zhipu_api_key(app_config))
+                    generated = generate_zhipu_watchlist_commentary(
+                        zhipu_config,
+                        payload,
+                        fallback_title=title,
+                    )
+                    generated_title = generated.title
+                    generated_commentary = generated.commentary
+                    generated_model = generated.model
+                else:
+                    command = runtime_ai_command(app_config)
+                    if not command:
+                        break
+                    generated_title, generated_commentary = parse_external_commentary(
+                        run_external_ai(command, payload),
+                        title,
+                    )
+                    generated_model = None
+                try:
+                    validate_generated_commentary(
+                        generated_title,
+                        generated_commentary,
+                        summary,
+                        quotes,
+                        tone_profiles,
+                        intraday_facts,
+                    )
+                except ValueError as exc:
+                    validation_error = exc
+                    if attempt + 1 >= AI_VALIDATION_ATTEMPTS:
+                        raise
+                    LOGGER.warning(
+                        "Watchlist commentary backend %s failed validation; retrying: %s",
+                        backend,
+                        exc,
+                    )
                     continue
-                generated_title, generated_commentary = parse_external_commentary(
-                    run_external_ai(command, payload),
-                    title,
-                )
-                validate_generated_commentary(generated_title, generated_commentary, summary, quotes, tone_profiles)
                 title = generated_title
                 commentary = generated_commentary
-                provider = "external_command"
+                provider = "zhipu" if backend == "zhipu" else "external_command"
+                model = generated_model
+                break
+            else:
+                continue
+            if provider == "rules_fallback":
+                continue
             mode = "external_ai"
             note = None
             break
@@ -956,6 +1091,7 @@ def generate_watchlist_commentary(
         "trade_date": captured_at.strftime("%Y%m%d"),
         "slot": str(request.get("slot") or "manual"),
         "trigger": "manual" if bool(request.get("manual")) else "scheduled",
+        "user_email": str(request.get("user_email") or "").strip().lower() or None,
         "generated_at": datetime.now(SHANGHAI_TZ).isoformat(timespec="seconds"),
         "source_updated_at": latest_source_time(quotes, market),
         "mode": mode,

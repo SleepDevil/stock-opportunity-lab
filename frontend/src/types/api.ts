@@ -1455,6 +1455,7 @@ export type WatchlistCommentaryResponse = {
   trade_date: string;
   slot: string;
   trigger: 'scheduled' | 'manual';
+  user_email?: string | null;
   generated_at: string;
   source_updated_at?: string | null;
   mode: 'external_ai' | 'rules_fallback';

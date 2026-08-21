@@ -34,10 +34,14 @@ async function loadModel() {
 
 const model = await loadModel();
 
-test('normalizes and validates complete account emails', () => {
+test('accepts a ByteDance account prefix while preserving complete external emails', () => {
   assert.equal(model.normalizeEmailInput(' User.Name@Bytedance.com '), 'user.name@bytedance.com');
+  assert.equal(model.normalizeEmailInput(' User.Name '), 'user.name@bytedance.com');
+  assert.equal(model.accountEmailInputValue('user.name@bytedance.com'), 'user.name');
+  assert.equal(model.accountEmailInputValue('user@example.com'), 'user@example.com');
   assert.equal(model.isValidEmailInput('user.name@bytedance.com'), true);
-  assert.equal(model.isValidEmailInput('user.name'), false);
+  assert.equal(model.isValidEmailInput('user.name'), true);
   assert.equal(model.isValidEmailInput('user@bytedance'), false);
+  assert.equal(model.isValidEmailInput('user name'), false);
   assert.equal(model.isValidEmailInput(''), false);
 });

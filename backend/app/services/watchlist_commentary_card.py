@@ -79,6 +79,12 @@ def card_time(value: str | None) -> str:
     return parsed.astimezone(SHANGHAI_TZ).strftime("%Y-%m-%d %H:%M")
 
 
+def account_display_name(value: Any) -> str:
+    email = str(value or "").strip().lower()
+    prefix, separator, _domain = email.partition("@")
+    return prefix if separator and prefix else email
+
+
 def stock_detail_markdown(stocks: list[dict[str, Any]], platform_url: str) -> str:
     lines = []
     for stock in stocks:
@@ -105,6 +111,7 @@ def build_watchlist_commentary_card(result: dict[str, Any], platform_url: str) -
     source_updated_at = card_time(result.get("source_updated_at"))
     manual = str(result.get("trigger") or "scheduled") == "manual"
     trigger_label = "手动触发" if manual else "定时巡场"
+    account_label = account_display_name(result.get("user_email")) or "部署默认账户"
     commentary = linkify_stock_names(str(result.get("commentary") or ""), stocks, platform_url)
     footer = (
         f"行情快照 {escape_lark_markdown(source_updated_at)} · "
@@ -117,7 +124,7 @@ def build_watchlist_commentary_card(result: dict[str, Any], platform_url: str) -
             "update_multi": True,
             "width_mode": "default",
             "enable_forward": True,
-            "summary": {"content": f"今日自选走势锐评 · {trigger_label} · {generated_at}"},
+            "summary": {"content": f"今日自选走势锐评 · {account_label} · {trigger_label} · {generated_at}"},
             "style": {
                 "text_size": {
                     "body": {"default": "normal", "pc": "normal", "mobile": "normal"},
@@ -129,7 +136,7 @@ def build_watchlist_commentary_card(result: dict[str, Any], platform_url: str) -
             "title": {"tag": "plain_text", "content": "今日自选走势锐评"},
             "subtitle": {
                 "tag": "plain_text",
-                "content": f"{trigger_label} · {generated_at} · 最新可用行情快照",
+                "content": f"{account_label} · {trigger_label} · {generated_at} · 最新可用行情快照",
             },
             "template": "green",
             "icon": {"tag": "standard_icon", "token": "chart_colorful"},
@@ -200,7 +207,10 @@ def build_watchlist_commentary_card(result: dict[str, Any], platform_url: str) -
                 },
                 {
                     "tag": "markdown",
-                    "content": f"**{escape_lark_markdown(title)}**\n{commentary}",
+                    "content": (
+                        f"<font color='grey'>播报账户：{escape_lark_markdown(account_label)}</font>\n\n"
+                        f"**{escape_lark_markdown(title)}**\n{commentary}"
+                    ),
                     "text_size": "body",
                 },
                 {

@@ -4784,7 +4784,7 @@ def test_notification_settings_accepts_numeric_feishu_group_id(tmp_path: Path) -
     assert saved.watchlist_commentary_platform_url == "https://stock.example.com"
 
 
-def test_notification_settings_uses_deployment_defaults_until_user_overrides(tmp_path: Path) -> None:
+def test_notification_settings_uses_shared_deployment_group_for_user(tmp_path: Path) -> None:
     config = AppConfig(
         data_dir=tmp_path,
         watchlist_commentary_feishu_enabled=True,
@@ -4797,6 +4797,11 @@ def test_notification_settings_uses_deployment_defaults_until_user_overrides(tmp
     assert defaults.watchlist_commentary_feishu_chat_id == "oc_default12345678"
     assert defaults.watchlist_commentary_platform_url == "https://stock.example.com"
 
+    deployment_defaults = load_notification_settings(config)
+    assert deployment_defaults.watchlist_commentary_feishu_enabled is True
+    assert deployment_defaults.watchlist_commentary_feishu_chat_id == "oc_default12345678"
+    assert deployment_defaults.watchlist_commentary_platform_url == "https://stock.example.com"
+
     saved = save_notification_settings(
         config,
         "trader@example.com",
@@ -4805,6 +4810,29 @@ def test_notification_settings_uses_deployment_defaults_until_user_overrides(tmp
         watchlist_commentary_platform_url="https://stock.example.com",
     )
     assert saved.watchlist_commentary_feishu_enabled is False
+
+
+def test_user_with_board_settings_but_no_subscription_uses_shared_group(tmp_path: Path) -> None:
+    config = AppConfig(
+        data_dir=tmp_path,
+        watchlist_commentary_feishu_enabled=True,
+        watchlist_commentary_feishu_chat_id="oc_default12345678",
+        watchlist_commentary_platform_url="https://stock.example.com/",
+    )
+
+    save_notification_settings(
+        config,
+        "guest@example.com",
+        board_exclusion_enabled=True,
+        excluded_boards=["star"],
+    )
+
+    loaded = load_notification_settings(config, "guest@example.com")
+    assert loaded.board_exclusion_enabled is True
+    assert loaded.excluded_boards == ["star"]
+    assert loaded.watchlist_commentary_feishu_enabled is True
+    assert loaded.watchlist_commentary_feishu_chat_id == "oc_default12345678"
+    assert loaded.watchlist_commentary_platform_url == "https://stock.example.com"
 
 
 @pytest.mark.parametrize(

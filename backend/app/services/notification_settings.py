@@ -80,6 +80,8 @@ def load_notification_settings(config: AppConfig, user_email: str | None = None)
     record = get_user_settings(config, email)
     subscription = get_watchlist_commentary_subscription(config, email)
     if not record and not subscription:
+        # All bound accounts share the deployment destination by default. The
+        # account email is carried on every card so messages remain attributable.
         return NotificationSettings(user_email=email, **defaults)
     subscription_values = {
         "watchlist_commentary_feishu_enabled": bool(subscription.get("enabled")),

@@ -39,10 +39,10 @@ curl -fsS http://127.0.0.1:8000/api/health
 | `STOCK_LAB_ACCESS_KEY` | `/api/client-auth` 短时 token 的服务端签名密钥，至少 32 位并由 Secret 管理 |
 | `STOCK_LAB_FEISHU_APP_ID` | 可选通知应用 ID |
 | `STOCK_LAB_FEISHU_APP_SECRET` | 可选通知应用密钥 |
-| `STOCK_LAB_WATCHLIST_COMMENTARY_FEISHU_ENABLED` | 是否默认开启自选锐评群推送；开启后 15:00 的量化选股卡片也发送到同一群；`true`/`false` |
-| `STOCK_LAB_WATCHLIST_COMMENTARY_FEISHU_CHAT_ID` | 默认订阅群；支持数字群 ID 或 `oc_` 开头的 open_chat_id |
+| `STOCK_LAB_WATCHLIST_COMMENTARY_FEISHU_ENABLED` | 是否默认开启共享群的自选锐评推送；绑定邮箱的账户默认使用该配置，也可单独关闭；`true`/`false` |
+| `STOCK_LAB_WATCHLIST_COMMENTARY_FEISHU_CHAT_ID` | 所有账户默认共用的订阅群；支持数字群 ID 或 `oc_` 开头的 open_chat_id，卡片会标注用户邮箱的 `@` 前缀 |
 | `STOCK_LAB_WATCHLIST_COMMENTARY_PLATFORM_URL` | 卡片内个股分析链接的网站根地址 |
-| `STOCK_LAB_WATCHLIST_COMMENTARY_DEFAULT_WATCHLIST` | FaaS 首次启动时的默认自选 JSON 数组；Web 保存后优先使用服务端数据库中的名单 |
+| `STOCK_LAB_WATCHLIST_COMMENTARY_DEFAULT_WATCHLIST` | 无任何账户名单时供 FaaS 兼容任务使用的默认自选 JSON 数组；不会填充到新用户账户 |
 | `STOCK_LAB_WATCHLIST_COMMENTARY_TIMER_NAME` | FaaS Timer 触发器名称；创建触发器时须把 `{"timer_name":"同一名称"}` 配为“触发消息”，服务端兼容标准 Timer CloudEvent 与 HTTP Runtime 的直传消息，且仅接受名称完全匹配的请求 |
 | `STOCK_LAB_AI_PROVIDER` | 锐评生成后端：`auto`、`zhipu`、`command` 或 `rules`；默认 `auto` |
 | `STOCK_LAB_ZHIPU_API_KEY` | 智谱开放平台 API Key；配置后默认调用免费模型 |

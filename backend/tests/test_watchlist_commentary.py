@@ -303,6 +303,68 @@ def test_ai_bland_extreme_move_without_required_nickname_is_rejected(monkeypatch
     assert "德明利（小德子）" in result["commentary"]
 
 
+def test_ai_wrong_price_scale_is_retried_and_rejected(monkeypatch) -> None:
+    request = sample_request()
+    request["quotes"] = [{
+        "code": "002384",
+        "name": "东山精密",
+        "price": 185.90,
+        "pct_change": -4.80,
+        "open": 195.28,
+        "high": 198.66,
+        "low": 184.55,
+        "previous_close": 195.27,
+    }]
+    attempts: list[dict[str, object]] = []
+
+    def wrong_price_ai(_command: str, payload: dict[str, object]) -> str:
+        attempts.append(payload)
+        return "东山精密开盘还在附近晃悠，转头就往18块5深蹲，今天这走势真会给人上强度。"
+
+    monkeypatch.setenv("STOCK_LAB_AI_COMMAND", "wrong-price-ai")
+    monkeypatch.setattr(watchlist_commentary, "run_external_ai", wrong_price_ai)
+
+    result = watchlist_commentary.generate_watchlist_commentary(request)
+
+    assert len(attempts) == 2
+    assert "retry_instruction" not in attempts[0]
+    assert "18块5" in str(attempts[1]["retry_instruction"])
+    assert result["mode"] == "rules_fallback"
+    assert "18块5" not in result["commentary"]
+
+
+def test_ai_price_validation_retry_can_recover(monkeypatch) -> None:
+    request = sample_request()
+    request["quotes"] = [{
+        "code": "002384",
+        "name": "东山精密",
+        "price": 185.90,
+        "pct_change": -4.80,
+        "open": 195.28,
+        "high": 198.66,
+        "low": 184.55,
+        "previous_close": 195.27,
+    }]
+    attempts = 0
+
+    def recovering_ai(_command: str, _payload: dict[str, object]) -> str:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            return "东山精密往 18块5 深蹲，小数点都被踩丢了。"
+        return "东山精密回到 185.9 元附近，跌了4.8%，今天这蹲起的马步差点把地板踩穿。"
+
+    monkeypatch.setenv("STOCK_LAB_AI_COMMAND", "recovering-price-ai")
+    monkeypatch.setattr(watchlist_commentary, "run_external_ai", recovering_ai)
+
+    result = watchlist_commentary.generate_watchlist_commentary(request)
+
+    assert attempts == 2
+    assert result["mode"] == "external_ai"
+    assert result["provider"] == "external_command"
+    assert "185.9 元" in result["commentary"]
+
+
 def test_ai_markdown_is_normalized_to_plain_commentary() -> None:
     assert zhipu_ai.normalize_commentary("## **德明利** [今日走势](https://example.com)") == "德明利 今日走势"
 
@@ -473,10 +535,12 @@ def test_zhipu_ai_generates_structured_watchlist_commentary(monkeypatch) -> None
     assert body["model"] == "glm-4.7-flash"
     assert body["thinking"] == {"type": "disabled"}
     assert body["response_format"] == {"type": "json_object"}
+    assert body["temperature"] == 0.65
     assert "intraday_facts" in body["messages"][0]["content"]
     assert "涨跌幅只代表快照时点" in body["messages"][0]["content"]
     assert "只有 summary.leader" in body["messages"][0]["content"]
     assert "小德子" in body["messages"][0]["content"]
+    assert "禁止将 185 改写成“18块5”" in body["messages"][0]["content"]
     assert "zhipu-test-secret" not in request.data.decode("utf-8")
 
 
@@ -690,6 +754,41 @@ def test_watchlist_commentary_sends_configured_feishu_card(tmp_path, monkeypatch
     card_text = str(sent["card"])
     assert "https://stock.example.com/lab/stock?symbol=002920" in card_text
     assert "https://stock.example.com/lab/stock?symbol=001309" in card_text
+
+
+def test_guest_commentary_uses_shared_group_and_carries_email(tmp_path, monkeypatch) -> None:
+    config = AppConfig(
+        data_dir=tmp_path,
+        database_url=None,
+        access_key=TEST_ACCESS_KEY,
+        watchlist_commentary_feishu_enabled=True,
+        watchlist_commentary_feishu_chat_id="oc_sharedgroup12345678",
+        watchlist_commentary_platform_url="https://stock.example.com",
+    )
+    monkeypatch.setattr(main, "CONFIG", config)
+    sent: dict[str, object] = {}
+
+    def fake_send(card, chat_id, *, config):
+        sent["card"] = card
+        sent["chat_id"] = chat_id
+        sent["config"] = config
+        return True
+
+    monkeypatch.setattr(main, "send_feishu_card", fake_send)
+    request = sample_request()
+    request["user_email"] = "guest@example.com"
+
+    response = signed_post(TestClient(main.app), "/api/watchlist-commentary", request)
+
+    assert response.status_code == 200
+    assert response.json()["user_email"] == "guest@example.com"
+    assert response.json()["delivery"] == {
+        "status": "sent",
+        "message": "飞书卡片已发送到订阅群",
+    }
+    assert sent["chat_id"] == "oc_sharedgroup12345678"
+    assert "播报账户：guest" in str(sent["card"])
+    assert "guest@example.com" not in str(sent["card"])
 
 
 def test_watchlist_commentary_does_not_send_outside_trading_session(tmp_path, monkeypatch) -> None:

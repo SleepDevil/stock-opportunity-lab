@@ -162,11 +162,13 @@ def get_server_watchlist(config: AppConfig, user_email: str) -> dict[str, Any]:
             "source": "stored",
             "updated_at": str(row_value(row, "updated_at") or ""),
         }
-    default_stocks = configured_default_watchlist()
+    # The deployment default is reserved for the legacy account-less timer
+    # target in commentary_targets(). It must never seed an arbitrary user's
+    # personal watchlist.
     return {
         "user_email": email,
-        "stocks": default_stocks,
-        "source": "deployment_default" if default_stocks else "empty",
+        "stocks": [],
+        "source": "empty",
         "updated_at": None,
     }
 

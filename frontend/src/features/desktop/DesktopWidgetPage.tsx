@@ -68,7 +68,7 @@ import {
   subscribeStoredUserEmail,
   writeStoredUserEmail
 } from '../settings/accountStorage';
-import { isValidEmailInput, normalizeEmailInput } from '../settings/settingsModel';
+import { accountEmailInputValue, isValidEmailInput, normalizeEmailInput } from '../settings/settingsModel';
 import { useWatchlistSync } from '../watchlist/useWatchlistSync';
 import {
   addDesktopWatchStock,
@@ -167,7 +167,7 @@ export function DesktopWidgetPage() {
   const [addOpened, setAddOpened] = useState(false);
   const [stockSearchText, setStockSearchText] = useState('');
   const [accountBindingOpened, setAccountBindingOpened] = useState(false);
-  const [accountEmailInput, setAccountEmailInput] = useState(readStoredUserEmail);
+  const [accountEmailInput, setAccountEmailInput] = useState(() => accountEmailInputValue(readStoredUserEmail()));
   const [accountEmailError, setAccountEmailError] = useState('');
   const [pinned, setPinned] = useState(true);
   const [dockState, setDockState] = useState<DesktopWidgetDockState>(INACTIVE_DOCK_STATE);
@@ -334,7 +334,7 @@ export function DesktopWidgetPage() {
 
   const openAccountBinding = () => {
     setAddOpened(false);
-    setAccountEmailInput(userEmail);
+    setAccountEmailInput(accountEmailInputValue(userEmail));
     setAccountEmailError('');
     setAccountBindingOpened(true);
   };
@@ -348,7 +348,7 @@ export function DesktopWidgetPage() {
   const bindAccount = () => {
     const email = normalizeEmailInput(accountEmailInput);
     if (!isValidEmailInput(email)) {
-      setAccountEmailError('请输入完整邮箱，例如 name@example.com');
+      setAccountEmailError('请输入账户前缀，例如 sunfangjie.sidemercy');
       return;
     }
     writeStoredUserEmail(email);
@@ -694,13 +694,13 @@ export function DesktopWidgetPage() {
         <form onSubmit={(event) => { event.preventDefault(); bindAccount(); }}>
           <Stack gap="md">
             <Text size="sm" c="dimmed">
-              Web、客户端和 FaaS 定时播报必须使用同一个完整邮箱。绑定后会自动合并并上传本机已有自选。
+              输入账户前缀即可，系统会自动补全 @bytedance.com。绑定后会自动合并并上传本机已有自选。
             </Text>
             <TextInput
               autoFocus
-              label="账户邮箱"
-              description="邮箱只作为当前个人项目的同步标识。"
-              placeholder="name@example.com"
+              label="账户前缀"
+              description="也支持直接输入其他域名的完整邮箱。"
+              placeholder="sunfangjie.sidemercy"
               value={accountEmailInput}
               leftSection={<Mail size={15} />}
               error={accountEmailError || undefined}

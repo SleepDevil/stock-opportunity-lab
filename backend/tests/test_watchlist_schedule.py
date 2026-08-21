@@ -9,6 +9,7 @@ from app import main
 from app.config import AppConfig
 from app.routers import watchlist as watchlist_router
 from app.services import watchlist_schedule
+from app.services.notification_settings import save_notification_settings
 
 
 DEFAULT_STOCKS = [
@@ -24,7 +25,7 @@ def clean_schedule_environment(monkeypatch) -> None:
     monkeypatch.delenv(watchlist_schedule.TIMER_NAME_ENV, raising=False)
 
 
-def test_server_watchlist_roundtrip_and_default(tmp_path, monkeypatch) -> None:
+def test_server_watchlist_roundtrip_does_not_seed_new_account_from_deployment_default(tmp_path, monkeypatch) -> None:
     config = AppConfig(data_dir=tmp_path, database_url=None, access_key=TEST_ACCESS_KEY)
     monkeypatch.setattr(main, "CONFIG", config)
     monkeypatch.setattr(watchlist_router, "CONFIG", config)
@@ -33,8 +34,8 @@ def test_server_watchlist_roundtrip_and_default(tmp_path, monkeypatch) -> None:
     initial = client.get("/api/watchlist?user_email=trader%40example.com")
 
     assert initial.status_code == 200
-    assert initial.json()["source"] == "deployment_default"
-    assert initial.json()["stocks"] == DEFAULT_STOCKS
+    assert initial.json()["source"] == "empty"
+    assert initial.json()["stocks"] == []
 
     saved = client.put(
         "/api/watchlist",
@@ -70,6 +71,48 @@ def test_server_watchlist_accepts_more_than_eight_stocks(tmp_path, monkeypatch) 
 
     assert response.status_code == 200
     assert response.json()["stocks"] == stocks
+
+
+def test_scheduled_targets_route_each_email_to_shared_deployment_group(tmp_path) -> None:
+    config = AppConfig(
+        data_dir=tmp_path,
+        database_url=None,
+        watchlist_commentary_feishu_enabled=True,
+        watchlist_commentary_feishu_chat_id="oc_sharedgroup12345678",
+        watchlist_commentary_platform_url="https://stock.example.com",
+    )
+    watchlist_schedule.save_server_watchlist(
+        config,
+        "owner@example.com",
+        [{"code": "002920", "name": "德赛西威"}],
+    )
+    watchlist_schedule.save_server_watchlist(
+        config,
+        "guest@example.com",
+        [{"code": "600330", "name": "天通股份"}],
+    )
+    save_notification_settings(
+        config,
+        "owner@example.com",
+        watchlist_commentary_feishu_enabled=True,
+        watchlist_commentary_feishu_chat_id="oc_sharedgroup12345678",
+        watchlist_commentary_platform_url="https://stock.example.com",
+    )
+
+    targets = watchlist_schedule.commentary_targets(config)
+
+    assert [(target.user_email, target.chat_id, target.stocks) for target in targets] == [
+        (
+            "owner@example.com",
+            "oc_sharedgroup12345678",
+            [{"code": "002920", "name": "德赛西威"}],
+        ),
+        (
+            "guest@example.com",
+            "oc_sharedgroup12345678",
+            [{"code": "600330", "name": "天通股份"}],
+        ),
+    ]
 
 
 def test_server_watchlist_does_not_require_report_auth(tmp_path, monkeypatch) -> None:

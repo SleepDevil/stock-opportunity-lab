@@ -5,6 +5,7 @@ import json
 from app.config import AppConfig
 from app.services.notifications import send_feishu_card
 from app.services.watchlist_commentary_card import (
+    account_display_name,
     build_watchlist_commentary_card,
     linkify_stock_names,
     stock_analysis_url,
@@ -13,6 +14,7 @@ from app.services.watchlist_commentary_card import (
 
 def sample_result() -> dict[str, object]:
     return {
+        "user_email": "trader@example.com",
         "generated_at": "2026-07-30T10:41:09+08:00",
         "source_updated_at": "2026-07-30T10:41:03+08:00",
         "mode": "external_ai",
@@ -44,6 +46,9 @@ def test_card_uses_card_2_schema_and_links_every_stock() -> None:
     assert "callback" not in serialized
     assert "glm-4.7-flash 锐评" not in serialized
     assert [tag["text"]["content"] for tag in card["header"]["text_tag_list"]] == ["定时巡场"]
+    assert "trader" in card["header"]["subtitle"]["content"]
+    assert "播报账户：trader" in serialized
+    assert "trader@example.com" not in serialized
     assert "不构成投资建议" in serialized
 
 
@@ -89,6 +94,7 @@ def test_linkifier_escapes_untrusted_markdown_and_keeps_stock_links() -> None:
     assert stock_analysis_url("https://stock.example.com/", "001309") == (
         "https://stock.example.com/stock?symbol=001309"
     )
+    assert account_display_name("SunFangjie.SideMercy@bytedance.com") == "sunfangjie.sidemercy"
 
 
 def test_send_feishu_card_posts_interactive_message_to_chat(monkeypatch) -> None:

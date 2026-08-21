@@ -199,6 +199,7 @@ class WatchlistCommentaryResponse(BaseModel):
     trade_date: str
     slot: str
     trigger: Literal["scheduled", "manual"] = "scheduled"
+    user_email: str | None = Field(default=None, max_length=254)
     generated_at: str
     source_updated_at: str | None = None
     mode: Literal["external_ai", "rules_fallback"]

@@ -112,7 +112,7 @@ export function useWatchlistSync(userEmail: string) {
     const activeEmail = emailRef.current;
     if (!activeEmail) {
       setStatus('account_required');
-      setError('请先绑定完整邮箱，再修改自选名单');
+      setError('请先绑定账户前缀，再修改自选名单');
       return desiredWatchlistRef.current;
     }
     const next = writeDesktopWatchlist(normalizeDesktopWatchlist(value));

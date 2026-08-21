@@ -60,7 +60,7 @@ export function WebWatchlistEditor({
         mt="sm"
         value={query}
         leftSection={waitingForDebounce || searchQuery.isFetching ? <Loader size={14} /> : <Search size={15} />}
-        placeholder={disabled ? '先保存账户邮箱，再维护自选名单' : '输入股票名称、代码或首字母添加自选'}
+        placeholder={disabled ? '先保存账户前缀，再维护自选名单' : '输入股票名称、代码或首字母添加自选'}
         disabled={disabled}
         onChange={(event) => setQuery(event.currentTarget.value)}
       />

@@ -21,6 +21,7 @@ import { useWatchlistSync } from '../watchlist/useWatchlistSync';
 import { WatchlistCommentaryPreview } from '../watchlist/WatchlistCommentaryPreview';
 import { WebWatchlistEditor } from '../watchlist/WebWatchlistEditor';
 import {
+  accountEmailInputValue,
   boardOptions,
   defaultScreenPreferences,
   isValidEmailInput,
@@ -50,7 +51,7 @@ export function SettingsPage({
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const desktopRuntime = isDesktopRuntime();
-  const [notificationEmail, setNotificationEmail] = useState(normalizeEmailInput(userEmail));
+  const [notificationEmail, setNotificationEmail] = useState(accountEmailInputValue(userEmail));
   const [watchlistFeishuEnabled, setWatchlistFeishuEnabled] = useState(false);
   const [watchlistFeishuChatId, setWatchlistFeishuChatId] = useState('');
   const [watchlistPlatformUrl, setWatchlistPlatformUrl] = useState('');
@@ -70,7 +71,7 @@ export function SettingsPage({
     mutationFn: saveNotificationSettings,
     onSuccess: (result) => {
       const savedEmail = result.user_email ?? '';
-      setNotificationEmail(normalizeEmailInput(savedEmail));
+      setNotificationEmail(accountEmailInputValue(savedEmail));
       setUserEmail(savedEmail);
       setScreenPreferences({
         boardExclusionEnabled: Boolean(result.board_exclusion_enabled),
@@ -121,7 +122,7 @@ export function SettingsPage({
     },
     onSuccess: (settings) => {
       const savedEmail = settings.user_email ?? '';
-      setNotificationEmail(normalizeEmailInput(savedEmail));
+      setNotificationEmail(accountEmailInputValue(savedEmail));
       setUserEmail(savedEmail);
       setScreenPreferences({
         boardExclusionEnabled: Boolean(settings.board_exclusion_enabled),
@@ -194,7 +195,7 @@ export function SettingsPage({
     if (!userEmail) {
       return;
     }
-    setNotificationEmail(normalizeEmailInput(userEmail));
+    setNotificationEmail(accountEmailInputValue(userEmail));
   }, [userEmail]);
 
   useEffect(() => {
@@ -206,7 +207,7 @@ export function SettingsPage({
     setWatchlistFeishuChatId(data.watchlist_commentary_feishu_chat_id ?? '');
     setWatchlistPlatformUrl(data.watchlist_commentary_platform_url ?? '');
     if (!data.user_email) return;
-    setNotificationEmail(normalizeEmailInput(data.user_email));
+    setNotificationEmail(accountEmailInputValue(data.user_email));
     setScreenPreferences({
       boardExclusionEnabled: Boolean(data.board_exclusion_enabled),
       excludedBoards: sanitizeBoards(data.excluded_boards)
@@ -312,7 +313,7 @@ export function SettingsPage({
         <Group justify="space-between" align="flex-start" mb="md">
           <div>
             <Text fw={900}>同步账户与通知</Text>
-            <Text size="sm" c="dimmed">完整邮箱是 Web、客户端和 FaaS 共用的同步标识，也用于后台任务完成后的飞书通知。</Text>
+            <Text size="sm" c="dimmed">输入账户前缀即可，系统会补全 @bytedance.com；飞书锐评只展示前缀。</Text>
           </div>
           <Badge color={userEmail ? 'teal' : 'gray'} variant="light">
             {userEmail ? '已绑定' : '未绑定'}
@@ -320,12 +321,12 @@ export function SettingsPage({
         </Group>
         <SimpleGrid cols={{ base: 1, md: 2 }} spacing="sm">
           <TextInput
-            label="同步账户邮箱"
-            placeholder="name@example.com"
+            label="同步账户前缀"
+            placeholder="sunfangjie.sidemercy"
             value={notificationEmail}
             leftSection={<Mail size={15} />}
             disabled={notificationQuery.isLoading}
-            error={notificationEmail && !notificationEmailValid ? '请输入包含域名的完整邮箱' : undefined}
+            error={notificationEmail && !notificationEmailValid ? '请输入账户前缀或完整邮箱' : undefined}
             onChange={(event) => setNotificationEmail(event.currentTarget.value)}
           />
           <div className="notification-actions">
@@ -384,7 +385,7 @@ export function SettingsPage({
 
         {watchlistSync.status === 'account_required' ? (
           <Alert mt="sm" color="orange" variant="light" icon={<CloudOff size={17} />} title="先绑定同步账户">
-            请先在上方填写并保存完整邮箱。绑定前不能增删自选，绑定后系统会自动合并当前设备与服务端名单，避免定时播报漏股。
+            请先在上方填写并保存账户前缀。绑定前不能增删自选，绑定后系统会自动合并当前设备与服务端名单，避免定时播报漏股。
           </Alert>
         ) : null}
         {watchlistSync.status === 'error' ? (
